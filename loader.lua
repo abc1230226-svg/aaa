@@ -1,240 +1,147 @@
-local replicated_storage = game:GetService("ReplicatedStorage")
-local players = game:GetService("Players")
-local runService = game:GetService("RunService")
-local userInputService = game:GetService("UserInputService")
-local camera = workspace.CurrentCamera
-local localPlayer = players.LocalPlayer
-
-local isLocking = false
-local lockedTarget = nil
-local lockKey = Enum.KeyCode.E
-local espData = {}
-
--- 创建自瞄菜单UI
+-- 創建UI
 local ScreenGui = Instance.new("ScreenGui")
-ScreenGui.Name = "AimbotMenu"
+local Frame = Instance.new("Frame")
+local AimbotToggle = Instance.new("TextButton")
+local ESPToggle = Instance.new("TextButton")
+local CloseButton = Instance.new("TextButton")
+
+-- UI屬性設定
 ScreenGui.Parent = game.Players.LocalPlayer:WaitForChild("PlayerGui")
+ScreenGui.Name = "CheatMenu"
 
-local frame = Instance.new("Frame")
-frame.Size = UDim2.new(0, 200, 0, 150)
-frame.Position = UDim2.new(0, 10, 0, 10)
-frame.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
-frame.Parent = ScreenGui
+Frame.Parent = ScreenGui
+Frame.Size = UDim2.new(0, 250, 0, 150)
+Frame.Position = UDim2.new(0, 10, 0, 10)
+Frame.BackgroundColor3 = Color3.new(0, 0, 0)
+Frame.BackgroundTransparency = 0.5
+Frame.BorderSizePixel = 0
 
-local toggleBoxButton = Instance.new("TextButton")
-toggleBoxButton.Size = UDim2.new(1, -20, 0, 30)
-toggleBoxButton.Position = UDim2.new(0, 10, 0, 10)
-toggleBoxButton.Text = "启用方框"
-toggleBoxButton.Parent = frame
+AimbotToggle.Parent = Frame
+AimbotToggle.Size = UDim2.new(1, -20, 0, 40)
+AimbotToggle.Position = UDim2.new(0, 10, 0, 10)
+AimbotToggle.BackgroundColor3 = Color3.new(0.2, 0.2, 0.2)
+AimbotToggle.Text = "自瞄: 關閉"
+AimbotToggle.TextColor3 = Color3.new(1, 1, 1)
 
-local showHealthCheckbox = Instance.new("TextButton")
-showHealthCheckbox.Size = UDim2.new(1, -20, 0, 30)
-showHealthCheckbox.Position = UDim2.new(0, 10, 0, 50)
-showHealthCheckbox.Text = "显示血量：关闭"
-showHealthCheckbox.Parent = frame
+ESPToggle.Parent = Frame
+ESPToggle.Size = UDim2.new(1, -20, 0, 40)
+ESPToggle.Position = UDim2.new(0, 10, 0, 60)
+ESPToggle.BackgroundColor3 = Color3.new(0.2, 0.2, 0.2)
+ESPToggle.Text = "ESP: 關閉"
+ESPToggle.TextColor3 = Color3.new(1, 1, 1)
 
-local bulletTrackButton = Instance.new("TextButton")
-bulletTrackButton.Size = UDim2.new(1, -20, 0, 30)
-bulletTrackButton.Position = UDim2.new(0, 10, 0, 90)
-bulletTrackButton.Text = "子弹追踪：关闭"
-bulletTrackButton.Parent = frame
+CloseButton.Parent = Frame
+CloseButton.Size = UDim2.new(1, -20, 0, 40)
+CloseButton.Position = UDim2.new(0, 10, 0, 110)
+CloseButton.BackgroundColor3 = Color3.new(1, 0, 0)
+CloseButton.Text = "關閉"
+CloseButton.TextColor3 = Color3.new(1, 1, 1)
 
--- 控制变量
-local enableBox = false
-local showHealth = false
-local enableBulletTrack = false
+-- 狀態變數
+local aimbotEnabled = false
+local espEnabled = false
 
--- 按钮事件
-toggleBoxButton.MouseButton1Click:Connect(function()
-    enableBox = not enableBox
-    toggleBoxButton.Text = enableBox and "禁用方框" or "启用方框"
-end)
-
-showHealthCheckbox.MouseButton1Click:Connect(function()
-    showHealth = not showHealth
-    showHealthCheckbox.Text = "显示血量：" .. (showHealth and "开启" or "关闭")
-end)
-
-bulletTrackButton.MouseButton1Click:Connect(function()
-    enableBulletTrack = not enableBulletTrack
-    bulletTrackButton.Text = "子弹追踪：" .. (enableBulletTrack and "开启" or "关闭")
-end)
-
--- 获取所有玩家实体
-local function get_players()
-    local entities = {}
-    for _, child in ipairs(workspace:GetChildren()) do
-        if child:FindFirstChildOfClass("Humanoid") then
-            table.insert(entities, child)
-        elseif child.Name == "HurtEffect" then
-            for _, hurt_player in ipairs(child:GetChildren()) do
-                if hurt_player.ClassName ~= "Highlight" then
-                    table.insert(entities, hurt_player)
-                end
-            end
-        end
-    end
-    return entities
-end
-
--- 获取最近的玩家
-local function get_closest_player()
-    local closest, closestDist = nil, math.huge
-    local character = localPlayer.Character
-    if not character or not character:FindFirstChild("HumanoidRootPart") then
-        return nil
-    end
-    for _, player in ipairs(get_players()) do
-        if player == localPlayer then continue end
-        if not player:FindFirstChild("HumanoidRootPart") then continue end
-        local position, onScreen = camera:WorldToViewportPoint(player.HumanoidRootPart.Position)
-        if not onScreen then continue end
-        local center = Vector2.new(camera.ViewportSize.X/2, camera.ViewportSize.Y/2)
-        local dist = (center - Vector2.new(position.X, position.Y)).Magnitude
-        if dist < closestDist then
-            closestDist = dist
-            closest = player
-        end
-    end
-    return closest
-end
-
--- 创建ESP（方框和血量）
-local function createESP(player)
-    local adornment = Instance.new("BoxHandleAdornment")
-    adornment.Adornee = player.Character and player.Character:FindFirstChild("Head")
-    adornment.Size = Vector3.new(2, 2, 2)
-    adornment.Color3 = Color3.new(1, 0, 0)
-    adornment.Transparency = 0.5
-    adornment.ZIndex = 10
-    adornment.AlwaysOnTop = true
-    adornment.Parent = workspace
-
-    local healthGui = nil
-    if showHealth then
-        healthGui = Instance.new("BillboardGui")
-        healthGui.Size = UDim2.new(4, 0, 1, 0)
-        healthGui.Adornee = player.Character and player.Character:FindFirstChild("Head")
-        healthGui.Parent = workspace
-        local textLabel = Instance.new("TextLabel")
-        textLabel.Size = UDim2.new(1, 0, 1, 0)
-        textLabel.BackgroundTransparency = 1
-        textLabel.TextColor3 = Color3.new(1, 1, 1)
-        textLabel.TextStrokeColor3 = Color3.new(0, 0, 0)
-        textLabel.TextStrokeTransparency = 0
-        textLabel.TextScaled = true
-        textLabel.Parent = healthGui
-    end
-    return {box = adornment, healthGui = healthGui}
-end
-
--- 销毁ESP
-local function destroyESP(data)
-    if data.box then data.box:Destroy() end
-    if data.healthGui then data.healthGui:Destroy() end
-end
-
--- 自定义render逻辑
-runService.RenderStepped:Connect(function()
-    -- 自动锁定
-    if isLocking then
-        if not (lockedTarget and lockedTarget.Character and lockedTarget.Character:FindFirstChild("HumanoidRootPart")) then
-            lockedTarget = get_closest_player()
-        end
-        -- 镜头锁定
-        if lockedTarget and lockedTarget.Character and lockedTarget.Character:FindFirstChild("HumanoidRootPart") then
-            local targetPos = lockedTarget.Character.HumanoidRootPart.Position
-            local currentCamCFrame = camera.CFrame
-            local newCFrame = CFrame.new(currentCamCFrame.Position, targetPos)
-            camera.CFrame = newCFrame
-        end
-    end
-
-    -- 更新ESP
-    for player, data in pairs(espData) do
-        if not (player.Character and player.Character:FindFirstChild("Head")) then
-            destroyESP(data)
-            espData[player] = nil
-        else
-            -- 方框
-            if enableBox then
-                if not data.box then
-                    data = createESP(player)
-                    espData[player] = data
-                else
-                    data.box.Adornee = player.Character.Head
-                end
-            else
-                if data then destroyESP(data) espData[player] = nil end
-            end
-
-            -- 血量显示
-            if showHealth and data and data.healthGui and player.Character and player.Character:FindFirstChildOfClass("Humanoid") then
-                local humanoid = player.Character:FindFirstChildOfClass("Humanoid")
-                local health = humanoid.Health
-                local maxHealth = humanoid.MaxHealth
-                local textLabel = data.healthGui:FindFirstChildOfClass("TextLabel")
-                if textLabel then
-                    textLabel.Text = string.format("血量: %.0f/%.0f", health, maxHealth)
-                end
-            end
-
-            -- 距离显示
-            if data and data.distanceGui then
-                local headPos = player.Character.Head.Position
-                local screenPos, onScreen = camera:WorldToViewportPoint(headPos)
-                if onScreen then
-                    if not data.distanceGui then
-                        local billboard = Instance.new("BillboardGui")
-                        billboard.Size = UDim2.new(4, 0, 1, 0)
-                        billboard.Adornee = player.Character.Head
-                        billboard.Parent = workspace
-                        local textLabel = Instance.new("TextLabel")
-                        textLabel.Size = UDim2.new(1, 0, 1, 0)
-                        textLabel.BackgroundTransparency = 1
-                        textLabel.TextColor3 = Color3.new(1, 1, 1)
-                        textLabel.TextStrokeColor3 = Color3.new(0, 0, 0)
-                        textLabel.TextStrokeTransparency = 0
-                        textLabel.TextScaled = true
-                        textLabel.Parent = billboard
-                        data.distanceGui = billboard
-                    end
-                    local distance = (headPos - workspace.CurrentCamera.CFrame.Position).Magnitude
-                    local label = data.distanceGui:FindFirstChildOfClass("TextLabel")
-                    if label then
-                        label.Text = string.format("距離: %.1f", distance)
-                    end
-                    data.distanceGui.Adornee = player.Character.Head
-                else
-                    if data.distanceGui then
-                        data.distanceGui:Destroy()
-                        data.distanceGui = nil
-                    end
-                end
-            end
-        end
-    end
-
-    -- 添加新目标到espData
-    for _, player in ipairs(get_players()) do
-        if not espData[player] then espData[player] = {} end
-    end
-
-    -- 子弹追踪（示意）
-    if enableBulletTrack and lockedTarget and lockedTarget.Character then
-        -- 这里可以加入弹道追踪逻辑
+-- 按鈕事件
+AimbotToggle.MouseButton1Click:Connect(function()
+    aimbotEnabled = not aimbotEnabled
+    if aimbotEnabled then
+        AimbotToggle.Text = "自瞄: 開啟"
+    else
+        AimbotToggle.Text = "自瞄: 關閉"
     end
 end)
 
--- 监听锁定按键
-userInputService.InputBegan:Connect(function(input, gameProcessed)
-    if gameProcessed then return end
-    if input.KeyCode == lockKey then
-        isLocking = not isLocking
-        if isLocking then
-            lockedTarget = get_closest_player()
-        else
-            lockedTarget = nil
+ESPToggle.MouseButton1Click:Connect(function()
+    espEnabled = not espEnabled
+    if espEnabled then
+        ESPToggle.Text = "ESP: 開啟"
+    else
+        ESPToggle.Text = "ESP: 關閉"
+    end
+end)
+
+CloseButton.MouseButton1Click:Connect(function()
+    ScreenGui:Destroy()
+end)
+
+-- 自瞄功能範例（簡單的模擬範例）
+local RunService = game:GetService("RunService")
+local Players = game:GetService("Players")
+local localPlayer = Players.LocalPlayer
+
+local function getClosestPlayer()
+    local closestDist = math.huge
+    local closestPlayer = nil
+    for _, player in ipairs(Players:GetPlayers()) do
+        if player ~= localPlayer and player.Character and player.Character:FindFirstChild("HumanoidRootPart") then
+            local distance = (player.Character.HumanoidRootPart.Position - localPlayer.Character.HumanoidRootPart.Position).magnitude
+            if distance < closestDist then
+                closestDist = distance
+                closestPlayer = player
+            end
+        end
+    end
+    return closestPlayer
+end
+
+-- ESP範例：在玩家頭上畫框
+local function drawESP()
+    for _, player in ipairs(Players:GetPlayers()) do
+        if player ~= localPlayer and player.Character and player.Character:FindFirstChild("Head") then
+            local box = Instance.new("BillboardGui", player.Character.Head)
+            box.Name = "ESPBox"
+            box.Size = UDim2.new(0, 100, 0, 100)
+            box.Adornee = player.Character.Head
+            box.AlwaysOnTop = true
+            local frame = Instance.new("Frame", box)
+            frame.Size = UDim2.new(1, 0, 1, 0)
+            frame.BackgroundColor3 = Color3.new(1, 0, 0)
+            frame.BorderSizePixel = 0
+        end
+    end
+end
+
+local espDrawnPlayers = {}
+
+-- 運行循環
+RunService.RenderStepped:Connect(function()
+    if aimbotEnabled then
+        local target = getClosestPlayer()
+        if target and target.Character and target.Character:FindFirstChild("HumanoidRootPart") then
+            -- 自瞄：簡單的模擬（實際會用更複雜的控制）
+            local hrp = target.Character.HumanoidRootPart
+            -- 這裡可以加入自瞄的實現（如調整相機或滑鼠位置）
+            -- 由於示範，這裡不做實際的控制
+        end
+    end
+
+    if espEnabled then
+        -- 添加ESP
+        for _, player in ipairs(Players:GetPlayers()) do
+            if player ~= localPlayer and player.Character and not player.Character:FindFirstChild("ESPBox") then
+                -- 如果沒畫就畫
+                local head = player.Character:FindFirstChild("Head")
+                if head then
+                    local box = Instance.new("BillboardGui", head)
+                    box.Name = "ESPBox"
+                    box.Size = UDim2.new(0, 100, 0, 100)
+                    box.Adornee = head
+                    box.AlwaysOnTop = true
+                    local frame = Instance.new("Frame", box)
+                    frame.Size = UDim2.new(1, 0, 1, 0)
+                    frame.BackgroundColor3 = Color3.new(1, 0, 0)
+                    frame.BorderSizePixel = 0
+                end
+            end
+        end
+        -- 移除已不存在的ESP
+        for _, player in ipairs(Players:GetPlayers()) do
+            if player ~= localPlayer and player.Character then
+                local esp = player.Character:FindFirstChild("ESPBox")
+                if not player.Character:FindFirstChild("Head") and esp then
+                    esp:Destroy()
+                end
+            end
         end
     end
 end)
