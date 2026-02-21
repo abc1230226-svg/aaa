@@ -3,12 +3,11 @@ local players = game:GetService("Players")
 local runService = game:GetService("RunService")
 local userInputService = game:GetService("UserInputService")
 local camera = workspace.CurrentCamera
-
 local localPlayer = players.LocalPlayer
+
 local isLocking = false
 local lockedTarget = nil
 local lockKey = Enum.KeyCode.E
-
 local espData = {}
 
 -- 创建自瞄菜单UI
@@ -45,6 +44,7 @@ local enableBox = false
 local showHealth = false
 local enableBulletTrack = false
 
+-- 按钮事件
 toggleBoxButton.MouseButton1Click:Connect(function()
     enableBox = not enableBox
     toggleBoxButton.Text = enableBox and "禁用方框" or "启用方框"
@@ -60,6 +60,7 @@ bulletTrackButton.MouseButton1Click:Connect(function()
     bulletTrackButton.Text = "子弹追踪：" .. (enableBulletTrack and "开启" or "关闭")
 end)
 
+-- 获取所有玩家实体
 local function get_players()
     local entities = {}
     for _, child in ipairs(workspace:GetChildren()) do
@@ -76,10 +77,13 @@ local function get_players()
     return entities
 end
 
+-- 获取最近的玩家
 local function get_closest_player()
     local closest, closestDist = nil, math.huge
     local character = localPlayer.Character
-    if not character or not character:FindFirstChild("HumanoidRootPart") then return nil end
+    if not character or not character:FindFirstChild("HumanoidRootPart") then
+        return nil
+    end
     for _, player in ipairs(get_players()) do
         if player == localPlayer then continue end
         if not player:FindFirstChild("HumanoidRootPart") then continue end
@@ -95,6 +99,7 @@ local function get_closest_player()
     return closest
 end
 
+-- 创建ESP（方框和血量）
 local function createESP(player)
     local adornment = Instance.new("BoxHandleAdornment")
     adornment.Adornee = player.Character and player.Character:FindFirstChild("Head")
@@ -105,14 +110,13 @@ local function createESP(player)
     adornment.AlwaysOnTop = true
     adornment.Parent = workspace
 
-  local healthGui = nil
+    local healthGui = nil
     if showHealth then
         healthGui = Instance.new("BillboardGui")
         healthGui.Size = UDim2.new(4, 0, 1, 0)
         healthGui.Adornee = player.Character and player.Character:FindFirstChild("Head")
         healthGui.Parent = workspace
-
-  local textLabel = Instance.new("TextLabel")
+        local textLabel = Instance.new("TextLabel")
         textLabel.Size = UDim2.new(1, 0, 1, 0)
         textLabel.BackgroundTransparency = 1
         textLabel.TextColor3 = Color3.new(1, 1, 1)
@@ -121,15 +125,16 @@ local function createESP(player)
         textLabel.TextScaled = true
         textLabel.Parent = healthGui
     end
-
-  return {box = adornment, healthGui = healthGui}
+    return {box = adornment, healthGui = healthGui}
 end
 
+-- 销毁ESP
 local function destroyESP(data)
     if data.box then data.box:Destroy() end
     if data.healthGui then data.healthGui:Destroy() end
 end
 
+-- 自定义render逻辑
 runService.RenderStepped:Connect(function()
     -- 自动锁定
     if isLocking then
@@ -146,7 +151,7 @@ runService.RenderStepped:Connect(function()
     end
 
     -- 更新ESP
-  for player, data in pairs(espData) do
+    for player, data in pairs(espData) do
         if not (player.Character and player.Character:FindFirstChild("Head")) then
             destroyESP(data)
             espData[player] = nil
@@ -160,14 +165,11 @@ runService.RenderStepped:Connect(function()
                     data.box.Adornee = player.Character.Head
                 end
             else
-                if data then
-                    destroyESP(data)
-                    espData[player] = nil
-                end
+                if data then destroyESP(data) espData[player] = nil end
             end
 
             -- 血量显示
-  if showHealth and data and data.healthGui and player.Character and player.Character:FindFirstChildOfClass("Humanoid") then
+            if showHealth and data and data.healthGui and player.Character and player.Character:FindFirstChildOfClass("Humanoid") then
                 local humanoid = player.Character:FindFirstChildOfClass("Humanoid")
                 local health = humanoid.Health
                 local maxHealth = humanoid.MaxHealth
@@ -178,7 +180,7 @@ runService.RenderStepped:Connect(function()
             end
 
             -- 距离显示
-   if data and data.distanceGui then
+            if data and data.distanceGui then
                 local headPos = player.Character.Head.Position
                 local screenPos, onScreen = camera:WorldToViewportPoint(headPos)
                 if onScreen then
@@ -214,16 +216,13 @@ runService.RenderStepped:Connect(function()
     end
 
     -- 添加新目标到espData
-  for _, player in ipairs(get_players()) do
-        if not espData[player] then
-            espData[player] = {}
-        end
+    for _, player in ipairs(get_players()) do
+        if not espData[player] then espData[player] = {} end
     end
 
     -- 子弹追踪（示意）
-  if enableBulletTrack and lockedTarget and lockedTarget.Character then
-        -- 这里可以添加弹道追踪逻辑，示例为绘制一条线（需要LineHandleAdornment或类似实现，略）
-        -- 由于没有具体API，此处留空或添加自定义弹道追踪
+    if enableBulletTrack and lockedTarget and lockedTarget.Character then
+        -- 这里可以加入弹道追踪逻辑
     end
 end)
 
