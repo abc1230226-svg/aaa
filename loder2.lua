@@ -37,24 +37,10 @@ autoFireButton.Parent=ScreenGui
 local espEnabled=false
 local autoAim=true
 local espObjects={}
-
 local aimRange=50
 
 local autoFiring=false -- 按住左鍵自動射擊
 local autoFireActive=false -- 是否按住左鍵
-
--- 判斷目標是否為隊友或屍體
-local function isTeammateOrCorpse(enemy)
-    if not enemy.Character then return false end
-    -- 根據遊戲判斷隊友或屍體
-    if enemy.Team and enemy.Team==LocalPlayer.Team then
-        return true -- 隊友
-    end
-    if enemy.Character:FindFirstChild("Humanoid") and enemy.Character.Humanoid.Health<=0 then
-        return true -- 屍體
-    end
-    return false
-end
 
 -- 獲取敵人列表
 local function getEnemies()
@@ -67,7 +53,7 @@ local function getEnemies()
     return t
 end
 
--- 獲取最近的敵人（排除隊友和屍體）
+-- 獲取最近的敵人
 local function getClosestEnemy()
     local minDist=math.huge
     local target=nil
@@ -75,34 +61,22 @@ local function getClosestEnemy()
     if not selfHRP then return nil end
     for _,enemy in ipairs(getEnemies()) do
         if enemy.Character and enemy.Character:FindFirstChild("HumanoidRootPart") then
-            if not isTeammateOrCorpse(enemy) then
-                local dist=(enemy.Character.HumanoidRootPart.Position - selfHRP.Position).Magnitude
-                if dist<=aimRange and dist<minDist then
-                    -- 判斷是否被建築阻擋
-                    local rayParams=RaycastParams.new()
-                    rayParams.FilterDescendantsInstances={LocalPlayer.Character}
-                    rayParams.FilterType=Enum.RaycastFilterType.Blacklist
-                    local origin=selfHRP.Position
-                    local direction=enemy.Character.HumanoidRootPart.Position - origin
-                    local result=workspace:Raycast(origin,direction,rayParams)
-                    if not result or result.Instance==enemy.Character.HumanoidRootPart then
-                        -- 無阻擋或射線直達敵人
-                        minDist=dist
-                        target=enemy
-                    end
-                end
+            local dist=(enemy.Character.HumanoidRootPart.Position - selfHRP.Position).Magnitude
+            if dist<=aimRange and dist<minDist then
+                minDist=dist
+                target=enemy
             end
         end
     end
     return target
 end
 
--- 創建ESP（不同顏色）
-local function createESP(v, color)
+-- 創建ESP
+local function createESP(v)
     local adornment=Instance.new("BoxHandleAdornment")
     adornment.Adornee=v.Character:FindFirstChild("HumanoidRootPart")
     adornment.Size=Vector3.new(3,6,1)
-    adornment.Color3=color
+    adornment.Color3=Color3.new(1,0,0)
     adornment.Transparency=0.5
     adornment.ZIndex=10
     adornment.AlwaysOnTop=true
@@ -129,8 +103,9 @@ local function aimAtTarget(target)
     end
 end
 
--- 發射子彈
+-- 發射子彈（傳送頭部位置）
 local function shootAtPosition(pos)
+    -- 這裡假設有一個RemoteEvent名叫 "ShootEvent"
     local shootEvent=game:GetService("ReplicatedStorage"):FindFirstChild("ShootEvent")
     if shootEvent then
         shootEvent:FireServer(pos)
@@ -143,14 +118,12 @@ local function startAutoFire()
     autoFiring=true
     spawn(function()
         while autoFiring do
-            local target=getClosestEnemy()
-            if target then
-                if target.Character and target.Character:FindFirstChild("Head") then
-                    -- 只打敵人（已排除隊友和屍體）
-                    shootAtPosition(target.Character.Head.Position)
+            for _,enemy in ipairs(getEnemies()) do
+                if enemy.Character and enemy.Character:FindFirstChild("Head") then
+                    shootAtPosition(enemy.Character.Head.Position)
                 end
             end
-            wait(0.05)
+            wait(0.05) -- 每50毫秒射一次
         end
     end)
 end
@@ -170,7 +143,11 @@ toggleAimButton.MouseButton1Click:Connect(function()
     toggleAimButton.Text="切換自動瞄準 ("..(autoAim and "ON" or "OFF")..")"
 end)
 
--- 按住左鍵，自動爆頭
+autoFireButton.MouseButton1Click:Connect(function()
+    -- 這個按鈕用來提示，實際控制在按住左鍵
+end)
+
+-- 按住左鍵開始自動射擊
 UserInputService.InputBegan:Connect(function(input, gameProcessed)
     if gameProcessed then return end
     if input.UserInputType==Enum.UserInputType.MouseButton1 then
@@ -179,6 +156,7 @@ UserInputService.InputBegan:Connect(function(input, gameProcessed)
     end
 end)
 
+-- 放開左鍵停止自動射擊
 UserInputService.InputEnded:Connect(function(input, gameProcessed)
     if gameProcessed then return end
     if input.UserInputType==Enum.UserInputType.MouseButton1 then
@@ -187,20 +165,17 @@ UserInputService.InputEnded:Connect(function(input, gameProcessed)
     end
 end)
 
--- 每一幀更新：ESP和自動瞄準
+-- 主循環：更新ESP &自動瞄準
 RunService.RenderStepped:Connect(function()
-    -- 清除之前的ESP標記
-    for _,v in pairs(espObjects) do
-        if v then v:Destroy() end
-    end
-    espObjects={}
-    -- 更新ESP標記
-    for _,enemy in ipairs(getEnemies()) do
-        if enemy.Character and enemy.Character:FindFirstChild("HumanoidRootPart") then
-            if isTeammateOrCorpse(enemy) then
-                createESP(enemy, Color3.new(0,0,1)) -- 藍色：隊友或屍體
-            else
-                createESP(enemy, Color3.new(1,0,0)) -- 紅色：敵人
+    -- 更新ESP
+    if espEnabled then
+        for _,v in pairs(espObjects) do
+            if v then v:Destroy() end
+        end
+        espObjects={}
+        for _,enemy in ipairs(getEnemies()) do
+            if enemy.Character and enemy.Character:FindFirstChild("HumanoidRootPart") then
+                table.insert(espObjects, createESP(enemy))
             end
         end
     end
