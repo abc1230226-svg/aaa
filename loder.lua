@@ -4,26 +4,32 @@ local RunService=game:GetService("RunService")
 local Camera=workspace.CurrentCamera
 local LocalPlayer=Players.LocalPlayer
 
--- UI設定
+-- UI設定（縱向排列）
 local ScreenGui=Instance.new("ScreenGui")
 ScreenGui.Name="AimAssistUI"
 ScreenGui.Parent=game:GetService("CoreGui") -- 放在CoreGui方便顯示
 
+local buttonWidth=120
+local buttonHeight=30
+local startX=10
+local startY=10
+local spacing=10 -- 按鈕間距
+
 local toggleESPButton=Instance.new("TextButton")
-toggleESPButton.Size=UDim2.new(0,120,0,30)
-toggleESPButton.Position=UDim2.new(0,10,0,10)
+toggleESPButton.Size=UDim2.new(0,buttonWidth,0,buttonHeight)
+toggleESPButton.Position=UDim2.new(0,startX,0,startY)
 toggleESPButton.Text="切換ESP（OFF）"
 toggleESPButton.Parent=ScreenGui
 
 local toggleAimButton=Instance.new("TextButton")
-toggleAimButton.Size=UDim2.new(0,120,0,30)
-toggleAimButton.Position=UDim2.new("0,10,0,50")
+toggleAimButton.Size=UDim2.new(0,buttonWidth,0,buttonHeight)
+toggleAimButton.Position=UDim2.new(0,startX,0,startY+buttonHeight+spacing)
 toggleAimButton.Text="切換自動瞄準（OFF）"
 toggleAimButton.Parent=ScreenGui
 
 local autoFireButton=Instance.new("TextButton")
-autoFireButton.Size=UDim2.new(0,120,0,30)
-autoFireButton.Position=UDim2.new("0,10,0,90")
+autoFireButton.Size=UDim2.new(0,buttonWidth,0,buttonHeight)
+autoFireButton.Position=UDim2.new(0,startX,0,startY+2*(buttonHeight+spacing))
 autoFireButton.Text="按住左鍵自動爆頭"
 autoFireButton.Parent=ScreenGui
 
@@ -34,6 +40,7 @@ local espObjects={}
 local aimRange=50
 
 local autoFiring=false -- 按住左鍵自動射擊
+
 local function getEnemies()
     local t={}
     for _,v in ipairs(Players:GetPlayers()) do
@@ -106,7 +113,7 @@ local function startAutoFire()
             if target and target.Character and target.Character:FindFirstChild("Head") then
                 shootAtPosition(target.Character.Head.Position)
             end
-            wait(0.05) -- 控制射擊頻率
+            wait(0.05)
         end
     end)
 end
@@ -127,10 +134,10 @@ toggleAimButton.MouseButton1Click:Connect(function()
 end)
 
 autoFireButton.MouseButton1Click:Connect(function()
-    -- 按鈕用來提示：按住左鍵自動爆頭，不需要額外操作
+    -- 按住左鍵自動爆頭提示，不切換
 end)
 
--- 按住左鍵，開始自動爆頭
+-- 按住左鍵觸發
 UserInputService.InputBegan:Connect(function(input, gameProcessed)
     if gameProcessed then return end
     if input.UserInputType==Enum.UserInputType.MouseButton1 then
@@ -147,7 +154,7 @@ UserInputService.InputEnded:Connect(function(input, gameProcessed)
     end
 end)
 
--- 主循環：更新ESP與自動瞄準
+-- 主循環
 RunService.RenderStepped:Connect(function()
     -- 更新ESP
     if espEnabled then
@@ -163,7 +170,7 @@ RunService.RenderStepped:Connect(function()
     end
 
     -- 自動瞄準
-  if autoAim then
+    if autoAim then
         local target = getClosestEnemy()
         if target then
             aimAtTarget(target)
