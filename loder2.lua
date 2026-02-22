@@ -4,12 +4,12 @@ local RunService=game:GetService("RunService")
 local Camera=workspace.CurrentCamera
 local LocalPlayer=Players.LocalPlayer
 
--- UI設定（縱向排列）
+-- UI設置（縱向排版）
 local ScreenGui=Instance.new("ScreenGui")
 ScreenGui.Name="AimAssistUI"
 ScreenGui.Parent=game:GetService("CoreGui") -- 放在CoreGui方便顯示
 
-local buttonWidth=120
+local buttonWidth=150
 local buttonHeight=30
 local startX=10
 local startY=10
@@ -40,7 +40,9 @@ local espObjects={}
 local aimRange=50
 
 local autoFiring=false -- 按住左鍵自動射擊
+local autoFireActive=false -- 是否按住左鍵
 
+-- 獲取敵人列表
 local function getEnemies()
     local t={}
     for _,v in ipairs(Players:GetPlayers()) do
@@ -51,6 +53,7 @@ local function getEnemies()
     return t
 end
 
+-- 獲取最近的敵人
 local function getClosestEnemy()
     local minDist=math.huge
     local target=nil
@@ -68,6 +71,7 @@ local function getClosestEnemy()
     return target
 end
 
+-- 創建ESP
 local function createESP(v)
     local adornment=Instance.new("BoxHandleAdornment")
     adornment.Adornee=v.Character:FindFirstChild("HumanoidRootPart")
@@ -87,6 +91,7 @@ local function clearESP()
     espObjects={}
 end
 
+-- 瞄準敵人
 local function aimAtTarget(target)
     if target and target.Character and target.Character:FindFirstChild("Head") then
         local enemyHead=target.Character.Head
@@ -98,22 +103,27 @@ local function aimAtTarget(target)
     end
 end
 
+-- 發射子彈（傳送頭部位置）
 local function shootAtPosition(pos)
-    local shootEvent=game:GetService("ReplicatedStorage"):WaitForChild("ShootEvent")
-    -- 直接傳敵人頭部位置，確保命中
-    shootEvent:FireServer(pos)
+    -- 這裡假設有一個RemoteEvent名叫 "ShootEvent"
+    local shootEvent=game:GetService("ReplicatedStorage"):FindFirstChild("ShootEvent")
+    if shootEvent then
+        shootEvent:FireServer(pos)
+    end
 end
 
+-- 持續自動射擊
 local function startAutoFire()
     if autoFiring then return end
     autoFiring=true
     spawn(function()
         while autoFiring do
-            local target=getClosestEnemy()
-            if target and target.Character and target.Character:FindFirstChild("Head") then
-                shootAtPosition(target.Character.Head.Position)
+            for _,enemy in ipairs(getEnemies()) do
+                if enemy.Character and enemy.Character:FindFirstChild("Head") then
+                    shootAtPosition(enemy.Character.Head.Position)
+                end
             end
-            wait(0.05)
+            wait(0.05) -- 每50毫秒射一次
         end
     end)
 end
@@ -134,10 +144,10 @@ toggleAimButton.MouseButton1Click:Connect(function()
 end)
 
 autoFireButton.MouseButton1Click:Connect(function()
-    -- 按住左鍵自動爆頭提示，不切換
+    -- 這個按鈕用來提示，實際控制在按住左鍵
 end)
 
--- 按住左鍵觸發
+-- 按住左鍵開始自動射擊
 UserInputService.InputBegan:Connect(function(input, gameProcessed)
     if gameProcessed then return end
     if input.UserInputType==Enum.UserInputType.MouseButton1 then
@@ -146,6 +156,7 @@ UserInputService.InputBegan:Connect(function(input, gameProcessed)
     end
 end)
 
+-- 放開左鍵停止自動射擊
 UserInputService.InputEnded:Connect(function(input, gameProcessed)
     if gameProcessed then return end
     if input.UserInputType==Enum.UserInputType.MouseButton1 then
@@ -154,7 +165,7 @@ UserInputService.InputEnded:Connect(function(input, gameProcessed)
     end
 end)
 
--- 主循環
+-- 主循環：更新ESP &自動瞄準
 RunService.RenderStepped:Connect(function()
     -- 更新ESP
     if espEnabled then
@@ -164,14 +175,14 @@ RunService.RenderStepped:Connect(function()
         espObjects={}
         for _,enemy in ipairs(getEnemies()) do
             if enemy.Character and enemy.Character:FindFirstChild("HumanoidRootPart") then
-                espObjects[enemy]=createESP(enemy)
+                table.insert(espObjects, createESP(enemy))
             end
         end
     end
 
     -- 自動瞄準
     if autoAim then
-        local target = getClosestEnemy()
+        local target=getClosestEnemy()
         if target then
             aimAtTarget(target)
         end
