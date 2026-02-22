@@ -1,44 +1,41 @@
+-- 最佳AimAssist腳本版本
 local Players=game:GetService("Players")
 local UserInputService=game:GetService("UserInputService")
 local RunService=game:GetService("RunService")
 local Camera=workspace.CurrentCamera
 local LocalPlayer=Players.LocalPlayer
 
--- UI設置
+-- UI建立
 local ScreenGui=Instance.new("ScreenGui")
 ScreenGui.Name="AimAssistUI"
-ScreenGui.Parent=game:GetService("CoreGui")
+ScreenGui.Parent=game:GetService("CoreGui") -- 需要在有權限的情況下使用
 
-local buttonWidth=150
-local buttonHeight=30
-local startX=10
-local startY=10
-local spacing=10
+local buttonWidth,buttonHeight,spacing=150,30,10
+local startX,startY=10,10
 
--- 按鈕設定
-local toggleESPButton=Instance.new("TextButton")
-toggleESPButton.Size=UDim2.new("0",buttonWidth,"0",buttonHeight)
-toggleESPButton.Position=UDim2.new("0",startX,"0",startY)
-toggleESPButton.Text="切換ESP（OFF）"
-toggleESPButton.Parent=ScreenGui
+local toggleESP=Instance.new("TextButton")
+toggleESP.Size=UDim2.new(0,buttonWidth,0,buttonHeight)
+toggleESP.Position=UDim2.new(0,startX,0,startY)
+toggleESP.Text="切換ESP（OFF）"
+toggleESP.Parent=ScreenGui
 
-local toggleAimButton=Instance.new("TextButton")
-toggleAimButton.Size=UDim2.new("0",buttonWidth,"0",buttonHeight)
-toggleAimButton.Position=UDim2.new("0",startX,"0",startY+buttonHeight+spacing)
-toggleAimButton.Text="切換自動瞄準（OFF）"
-toggleAimButton.Parent=ScreenGui
+local toggleAim=Instance.new("TextButton")
+toggleAim.Size=UDim2.new(0,buttonWidth,0,buttonHeight)
+toggleAim.Position=UDim2.new(0,startX,0,startY+buttonHeight+spacing)
+toggleAim.Text="切換自動瞄準（OFF）"
+toggleAim.Parent=ScreenGui
 
-local autoFireButton=Instance.new("TextButton")
-autoFireButton.Size=UDim2.new("0",buttonWidth,"0",buttonHeight)
-autoFireButton.Position=UDim2.new("0",startX,"0",startY+2*(buttonHeight+spacing))
-autoFireButton.Text="按住左鍵自動爆頭"
-autoFireButton.Parent=ScreenGui
+local autoFireBtn=Instance.new("TextButton")
+autoFireBtn.Size=UDim2.new(0,buttonWidth,0,buttonHeight)
+autoFireBtn.Position=UDim2.new(0,startX,0,startY+2*(buttonHeight+spacing))
+autoFireBtn.Text="按住左鍵自動爆頭"
+autoFireBtn.Parent=ScreenGui
 
-local dropdownButton=Instance.new("TextButton")
-dropdownButton.Size=UDim2.new(0,180,0,30)
-dropdownButton.Position=UDim2.new(0,startX,startY+3*(buttonHeight+spacing),0)
-dropdownButton.Text="點擊展開不鎖玩家"
-dropdownButton.Parent=ScreenGui
+local dropdownBtn=Instance.new("TextButton")
+dropdownBtn.Size=UDim2.new(0,180,0,30)
+dropdownBtn.Position=UDim2.new(0,startX,startY+3*(buttonHeight+spacing),0)
+dropdownBtn.Text="點擊展開不鎖玩家"
+dropdownBtn.Parent=ScreenGui
 
 local dropdownFrame=Instance.new("Frame")
 dropdownFrame.Size=UDim2.new(0,180,0,150)
@@ -51,7 +48,7 @@ dropdownFrame.Parent=ScreenGui
 local espEnabled=false
 local autoAim=true
 local espObjects={}
-local aimRange=50
+local aimRange=150 -- 可調整範圍
 local autoFiring=false
 local autoFireActive=false
 local excludedPlayers={} -- 不鎖玩家清單
@@ -60,21 +57,20 @@ local excludedPlayers={} -- 不鎖玩家清單
 local function isTeammateOrCorpse(enemy)
     if not enemy.Character then return false end
     if enemy.Team and enemy.Team==LocalPlayer.Team then
-        return true --隊友
+        return true
     end
     if enemy.Character:FindFirstChild("Humanoid") and enemy.Character.Humanoid.Health<=0 then
-        return true --屍體
+        return true
     end
     return false
 end
 
--- 取得敵人(排除清單)
+-- 取得敵人（排除清單）
 local function getEnemies()
     local t={}
     for _,v in ipairs(Players:GetPlayers()) do
         if v.Character and v.Character:FindFirstChild("HumanoidRootPart") and v~=LocalPlayer then
             if not (v.Team and v.Team==LocalPlayer.Team) then
-                -- 排除清單判斷
                 if not table.find(excludedPlayers, v.Name) then
                     if not (v.Character:FindFirstChild("Humanoid") and v.Character.Humanoid.Health<=0) then
                         table.insert(t,v)
@@ -86,6 +82,7 @@ local function getEnemies()
     return t
 end
 
+-- 取得最接近的敵人
 local function getClosestEnemy()
     local minDist=math.huge
     local target=nil
@@ -103,9 +100,10 @@ local function getClosestEnemy()
     return target
 end
 
-local function createESP(v, color)
+-- 創建ESP
+local function createESP(target, color)
     local adornment=Instance.new("BoxHandleAdornment")
-    adornment.Adornee=v.Character:FindFirstChild("HumanoidRootPart")
+    adornment.Adornee=target.Character:FindFirstChild("HumanoidRootPart")
     adornment.Size=Vector3.new(3,6,1)
     adornment.Color3=color
     adornment.Transparency=0.5
@@ -123,37 +121,41 @@ local function clearESP()
     espObjects={}
 end
 
-local function aimAtTarget(target)
+local function aimAt(target)
     if target and target.Character and target.Character:FindFirstChild("Head") then
         local enemyHead=target.Character.Head
         local selfHRP=LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
         if selfHRP then
-            local newCamCF=CFrame.new(selfHRP.Position, enemyHead.Position)
-            Camera.CFrame=newCamCF
+            Camera.CFrame=CFrame.new(selfHRP.Position, enemyHead.Position)
         end
     end
 end
 
-local function shootAtPosition(pos)
+local function shootAt(pos)
+    -- 請根據你的遊戲調整攻擊事件
     local shootEvent=game:GetService("ReplicatedStorage"):FindFirstChild("ShootEvent")
     if shootEvent then
         shootEvent:FireServer(pos)
     end
 end
 
-local function startAutoFire()
-    if autoFiring then return end
-    autoFiring=true
-    spawn(function()
-        while autoFiring do
-            for _,enemy in ipairs(getEnemies()) do
-                if enemy.Character and enemy.Character:FindFirstChild("Head") then
-                    shootAtPosition(enemy.Character.Head.Position)
-                end
+local function autoFire()
+    if autoFiring then
+        for _,enemy in ipairs(getEnemies()) do
+            if enemy.Character and enemy.Character:FindFirstChild("Head") then
+                shootAt(enemy.Character.Head.Position)
             end
-            wait(0.05)
         end
-    end)
+        wait(0.05)
+        autoFire()
+    end
+end
+
+local function startAutoFire()
+    if not autoFiring then
+        autoFiring=true
+        spawn(autoFire)
+    end
 end
 
 local function stopAutoFire()
@@ -161,31 +163,30 @@ local function stopAutoFire()
 end
 
 -- UI事件
-toggleESPButton.MouseButton1Click:Connect(function()
+toggleESP.MouseButton1Click:Connect(function()
     espEnabled=not espEnabled
-    toggleESPButton.Text="切換ESP ("..(espEnabled and "ON" or "OFF")..")"
+    toggleESP.Text="切換ESP ("..(espEnabled and "ON" or "OFF")..")"
 end)
 
-toggleAimButton.MouseButton1Click:Connect(function()
+toggleAim.MouseButton1Click:Connect(function()
     autoAim=not autoAim
-    toggleAimButton.Text="切換自動瞄準 ("..(autoAim and "ON" or "OFF")..")"
+    toggleAim.Text="切換自動瞄準 ("..(autoAim and "ON" or "OFF")..")"
 end)
 
-autoFireButton.MouseButton1Click:Connect(function()
+autoFireBtn.MouseButton1Click:Connect(function()
     if autoFiring then
         autoFiring=false
-        autoFireButton.Text="按住左鍵自動爆頭"
+        autoFireBtn.Text="按住左鍵自動爆頭"
     else
         autoFiring=true
         startAutoFire()
-        autoFireButton.Text="停止自動爆頭"
+        autoFireBtn.Text="停止自動爆頭"
     end
 end)
 
 UserInputService.InputBegan:Connect(function(input, gameProcessed)
     if gameProcessed then return end
     if input.UserInputType==Enum.UserInputType.MouseButton1 then
-        autoFireActive=true
         startAutoFire()
     end
 end)
@@ -193,12 +194,11 @@ end)
 UserInputService.InputEnded:Connect(function(input, gameProcessed)
     if gameProcessed then return end
     if input.UserInputType==Enum.UserInputType.MouseButton1 then
-        autoFireActive=false
         stopAutoFire()
     end
 end)
 
--- 排除清單UI
+-- 排除玩家名單UI
 local function refreshDropdown()
     dropdownFrame:ClearAllChildren()
     local y=0
@@ -211,16 +211,15 @@ local function refreshDropdown()
         btn.BackgroundColor3=Color3.new(0.3,0.3,0.3)
         btn.TextColor3=Color3.new(1,1,1)
         btn.MouseButton1Click:Connect(function()
-            local index=table.find(excludedPlayers,player.Name)
+            local index=table.find(excludedPlayers, player.Name)
             if index then
-                table.remove(excludedPlayers,index)
+                table.remove(excludedPlayers, index)
             else
-                table.insert(excludedPlayers,player.Name)
+                table.insert(excludedPlayers, player.Name)
             end
             refreshDropdown()
         end)
-        -- 已在排除清單則加粗
-        if table.find(excludedPlayers,player.Name) then
+        if table.find(excludedPlayers, player.Name) then
             btn.Font=Enum.Font.SourceSansBold
         else
             btn.Font=Enum.Font.SourceSans
@@ -229,25 +228,24 @@ local function refreshDropdown()
     end
 end
 
-dropdownButton.MouseButton1Click:Connect(function()
+dropdownBtn.MouseButton1Click:Connect(function()
     dropdownFrame.Visible=not dropdownFrame.Visible
     if dropdownFrame.Visible then
-        dropdownButton.Text="點擊收起不鎖玩家"
+        dropdownBtn.Text="點擊收起不鎖玩家"
     else
-        dropdownButton.Text="點擊展開不鎖玩家"
+        dropdownBtn.Text="點擊展開不鎖玩家"
     end
     refreshDropdown()
 end)
 
--- 初次刷新
 refreshDropdown()
 
--- 每幀刷新ESP和自動瞄準
+-- 主循環：ESP與自動瞄準
 RunService.RenderStepped:Connect(function()
-    -- 先清除所有ESP
+    -- 清除所有ESP
     clearESP()
 
-    -- 只顯示敵人的ESP
+    -- 顯示ESP
     if espEnabled then
         for _,enemy in ipairs(getEnemies()) do
             if enemy.Character and enemy.Character:FindFirstChild("HumanoidRootPart") then
@@ -260,7 +258,7 @@ RunService.RenderStepped:Connect(function()
     if autoAim then
         local target=getClosestEnemy()
         if target then
-            aimAtTarget(target)
+            aimAt(target)
         end
     end
 end)
