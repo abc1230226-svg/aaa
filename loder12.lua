@@ -43,15 +43,15 @@ dropdownFrame.BackgroundColor3=Color3.new(0.2,0.2,0.2)
 dropdownFrame.Visible=false
 dropdownFrame.Parent=ScreenGui
 
--- 其他程式碼保持不變
+-- 變數初始化
 local espEnabled=false
 local autoAim=true
+local autoFiring=false
 local espObjects={}
 local aimRange=150
-local autoFiring=false
-
 local excludedPlayers={}
 
+-- 獲取敵人（未排除且存活的玩家）
 local function getEnemies()
     local t={}
     for _,v in ipairs(Players:GetPlayers()) do
@@ -68,6 +68,7 @@ local function getEnemies()
     return t
 end
 
+-- 找最近的敵人
 local function getClosestEnemy()
     local minDist=math.huge
     local target=nil
@@ -85,6 +86,7 @@ local function getClosestEnemy()
     return target
 end
 
+-- 建立ESP標記
 local function createESP(target, color)
     local adornment=Instance.new("BoxHandleAdornment")
     adornment.Adornee=target.Character:FindFirstChild("HumanoidRootPart")
@@ -105,6 +107,7 @@ local function clearESP()
     espObjects={}
 end
 
+-- 自瞄
 local function aimAt(target)
     if target and target.Character and target.Character:FindFirstChild("Head") then
         local enemyHead=target.Character.Head
@@ -115,6 +118,7 @@ local function aimAt(target)
     end
 end
 
+-- 自動射擊
 local function shootAt(pos)
     local shootEvent=game:GetService("ReplicatedStorage"):FindFirstChild("ShootEvent")
     if shootEvent then
@@ -145,17 +149,19 @@ local function stopAutoFire()
     autoFiring=false
 end
 
--- UI事件
+-- UI事件：ESP切換
 toggleESP.MouseButton1Click:Connect(function()
     espEnabled=not espEnabled
     toggleESP.Text="切換ESP ("..(espEnabled and "ON" or "OFF")..")"
 end)
 
+-- UI事件：自動瞄準切換
 toggleAim.MouseButton1Click:Connect(function()
     autoAim=not autoAim
     toggleAim.Text="切換自動瞄準 ("..(autoAim and "ON" or "OFF")..")"
 end)
 
+-- UI事件：自動爆頭
 autoFireBtn.MouseButton1Click:Connect(function()
     if autoFiring then
         autoFiring=false
@@ -167,6 +173,7 @@ autoFireBtn.MouseButton1Click:Connect(function()
     end
 end)
 
+-- 按住左鍵自動爆頭
 UserInputService.InputBegan:Connect(function(input, gameProcessed)
     if gameProcessed then return end
     if input.UserInputType==Enum.UserInputType.MouseButton1 then
@@ -181,6 +188,7 @@ UserInputService.InputEnded:Connect(function(input, gameProcessed)
     end
 end)
 
+-- 排除玩家清單UI
 local function refreshDropdown()
     dropdownFrame:ClearAllChildren()
     local y=0
@@ -210,6 +218,7 @@ local function refreshDropdown()
     end
 end
 
+-- 展開/收起排除清單
 dropdownBtn.MouseButton1Click:Connect(function()
     dropdownFrame.Visible=not dropdownFrame.Visible
     if dropdownFrame.Visible then
@@ -220,10 +229,12 @@ dropdownBtn.MouseButton1Click:Connect(function()
     refreshDropdown()
 end)
 
+-- 預設刷新一次玩家列表
 refreshDropdown()
 
--- 主循環
+-- 主循環：畫ESP與Aim
 RunService.RenderStepped:Connect(function()
+    -- 清除之前的ESP
     clearESP()
     if espEnabled then
         for _,enemy in ipairs(getEnemies()) do
@@ -232,6 +243,7 @@ RunService.RenderStepped:Connect(function()
             end
         end
     end
+    -- 自動瞄準
     if autoAim then
         local target=getClosestEnemy()
         if target then
