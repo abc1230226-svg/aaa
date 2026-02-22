@@ -37,6 +37,7 @@ autoFireButton.Parent=ScreenGui
 local espEnabled=false
 local autoAim=true
 local espObjects={}
+
 local aimRange=50
 
 local autoFiring=false -- 按住左鍵自動射擊
@@ -44,15 +45,13 @@ local autoFireActive=false -- 是否按住左鍵
 
 -- 判斷目標是否為隊友或屍體
 local function isTeammateOrCorpse(enemy)
-    -- 你可以根據具體遊戲的標記進行判斷
-    -- 這裡假設：隊友有"Team"屬性或名稱，屍體有特定標記
     if not enemy.Character then return false end
-    -- 示例判斷（根據實際情況修改）
+    -- 根據遊戲判斷隊友或屍體
     if enemy.Team and enemy.Team==LocalPlayer.Team then
         return true -- 隊友
     end
     if enemy.Character:FindFirstChild("Humanoid") and enemy.Character.Humanoid.Health<=0 then
-        return true -- 屍體（已死）
+        return true -- 屍體
     end
     return false
 end
@@ -68,7 +67,7 @@ local function getEnemies()
     return t
 end
 
--- 獲取最近的敵人
+-- 獲取最近的敵人（排除隊友和屍體）
 local function getClosestEnemy()
     local minDist=math.huge
     local target=nil
@@ -76,14 +75,21 @@ local function getClosestEnemy()
     if not selfHRP then return nil end
     for _,enemy in ipairs(getEnemies()) do
         if enemy.Character and enemy.Character:FindFirstChild("HumanoidRootPart") then
-            -- 先判斷是不是敵人
-            if isTeammateOrCorpse(enemy) then
-                -- 如果是隊友或屍體，跳過
-            else
+            if not isTeammateOrCorpse(enemy) then
                 local dist=(enemy.Character.HumanoidRootPart.Position - selfHRP.Position).Magnitude
                 if dist<=aimRange and dist<minDist then
-                    minDist=dist
-                    target=enemy
+                    -- 判斷是否被建築阻擋
+                    local rayParams=RaycastParams.new()
+                    rayParams.FilterDescendantsInstances={LocalPlayer.Character}
+                    rayParams.FilterType=Enum.RaycastFilterType.Blacklist
+                    local origin=selfHRP.Position
+                    local direction=enemy.Character.HumanoidRootPart.Position - origin
+                    local result=workspace:Raycast(origin,direction,rayParams)
+                    if not result or result.Instance==enemy.Character.HumanoidRootPart then
+                        -- 無阻擋或射線直達敵人
+                        minDist=dist
+                        target=enemy
+                    end
                 end
             end
         end
@@ -137,11 +143,11 @@ local function startAutoFire()
     autoFiring=true
     spawn(function()
         while autoFiring do
-            for _,enemy in ipairs(getEnemies()) do
-                if enemy.Character and enemy.Character:FindFirstChild("Head") then
-                    if not isTeammateOrCorpse(enemy) then
-                        shootAtPosition(enemy.Character.Head.Position)
-                    end
+            local target=getClosestEnemy()
+            if target then
+                if target.Character and target.Character:FindFirstChild("Head") then
+                    -- 只打敵人（已排除隊友和屍體）
+                    shootAtPosition(target.Character.Head.Position)
                 end
             end
             wait(0.05)
@@ -181,21 +187,20 @@ UserInputService.InputEnded:Connect(function(input, gameProcessed)
     end
 end)
 
--- 主循環：更新ESP &自動瞄準
+-- 每一幀更新：ESP和自動瞄準
 RunService.RenderStepped:Connect(function()
-    -- 更新ESP
-    if espEnabled then
-        for _,v in pairs(espObjects) do
-            if v then v:Destroy() end
-        end
-        espObjects={}
-        for _,enemy in ipairs(getEnemies()) do
-            if enemy.Character and enemy.Character:FindFirstChild("HumanoidRootPart") then
-                if isTeammateOrCorpse(enemy) then
-                    createESP(enemy, Color3.new(0,1,0)) -- 綠色：隊友或屍體
-                else
-                    createESP(enemy, Color3.new(1,0,0)) -- 紅色：敵人
-                end
+    -- 清除之前的ESP標記
+    for _,v in pairs(espObjects) do
+        if v then v:Destroy() end
+    end
+    espObjects={}
+    -- 更新ESP標記
+    for _,enemy in ipairs(getEnemies()) do
+        if enemy.Character and enemy.Character:FindFirstChild("HumanoidRootPart") then
+            if isTeammateOrCorpse(enemy) then
+                createESP(enemy, Color3.new(0,0,1)) -- 藍色：隊友或屍體
+            else
+                createESP(enemy, Color3.new(1,0,0)) -- 紅色：敵人
             end
         end
     end
