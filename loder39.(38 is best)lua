@@ -1,0 +1,152 @@
+-- 客戶端腳本（用於Delta注入器）
+local UserInputService = game:GetService("UserInputService")
+local RunService = game:GetService("RunService")
+local Players = game:GetService("Players")
+local LocalPlayer = Players.LocalPlayer
+local Camera = workspace.CurrentCamera
+
+-- 創建UI
+local ScreenGui = Instance.new("ScreenGui")
+ScreenGui.Name = "ESP_Aimbot_Wallhack"
+ScreenGui.ResetOnSpawn = false
+ScreenGui.Parent = game:GetService("CoreGui")
+ScreenGui.Enabled = true
+
+local Frame = Instance.new("Frame", ScreenGui)
+Frame.Size = UDim2.new(0, 220, 0, 150)
+Frame.Position = UDim2.new(0, 10, 0, 10)
+Frame.BackgroundColor3 = Color3.new(0, 0, 0)
+Frame.BackgroundTransparency = 0.3
+Frame.BorderSizePixel = 2
+
+local function createButton(text, posY)
+    local btn = Instance.new("TextButton", Frame)
+    btn.Size = UDim2.new(0, 200, 0, 30)
+    btn.Position = UDim2.new(0, 10, 0, posY)
+    btn.Text = text
+    btn.TextColor3 = Color3.new(1, 1, 1)
+    btn.BackgroundColor3 = Color3.new(0.2, 0.2, 0.2)
+    btn.BorderSizePixel = 1
+    return btn
+end
+
+local espToggle = false
+local aimbotToggle = false
+local wallhackToggle = false
+
+local espButton = createButton("ESP (穿牆) OFF", 10)
+local aimbotButton = createButton("自瞄 OFF", 50)
+local wallhackButton = createButton("穿牆 OFF", 90)
+
+-- UI按鈕事件
+espButton.MouseButton1Click:Connect(function()
+    espToggle = not espToggle
+    espButton.Text = "ESP (穿牆) " .. (espToggle and "ON" or "OFF")
+end)
+
+aimbotButton.MouseButton1Click:Connect(function()
+    aimbotToggle = not aimbotToggle
+    aimbotButton.Text = "自瞄 " .. (aimbotToggle and "ON" or "OFF")
+end)
+
+wallhackButton.MouseButton1Click:Connect(function()
+    wallhackToggle = not wallhackToggle
+    wallhackButton.Text = "穿牆 " .. (wallhackToggle and "ON" or "OFF")
+end)
+
+-- 變數
+local targetEnemy = nil
+local lockOn = false
+
+-- 找最近敵人（只找頭部）
+local function getClosestEnemy()
+    local minDist = math.huge
+    local closest = nil
+    for _, v in pairs(workspace:GetChildren()) do
+        if v:IsA("Model") and v ~= LocalPlayer.Character then
+            -- 判斷是否是敵人（根據名稱或標記）
+            -- 這裡假設所有非本地玩家都是敵人
+            local hrp = v:FindFirstChild("HumanoidRootPart")
+            local head = v:FindFirstChild("Head")
+            if hrp and head then
+                local dist = (hrp.Position - LocalPlayer.Character.HumanoidRootPart.Position).magnitude
+                if dist < minDist then
+                    minDist = dist
+                    closest = v
+                end
+            end
+        end
+    end
+    return closest
+end
+
+-- 自瞄：鎖定最近敵人頭部，鏡頭轉向
+RunService.RenderStepped:Connect(function()
+    if aimbotToggle then
+        local target = getClosestEnemy()
+        if target and target:FindFirstChild("Head") then
+            local headPos = target.Head.Position
+            local screenPos, onScreen = Camera:WorldToScreenPoint(headPos)
+            if onScreen then
+                -- 鏡頭轉向鎖定（簡單做法：改變Camera.CFrame）
+                local hrp = target.HumanoidRootPart
+                local direction = (hrp.Position - LocalPlayer.Character.HumanoidRootPart.Position).unit
+                local lookAt = CFrame.new(LocalPlayer.Character.HumanoidRootPart.Position, hrp.Position)
+                Camera.CFrame = CFrame.new(LocalPlayer.Character.HumanoidRootPart.Position, hrp.Position)
+                -- 也可以用Tween或其他方式平滑轉向
+            end
+        end
+    end
+end)
+
+-- 透視和紅框框
+local function createBillboardGui(character)
+    local bill = Instance.new("BillboardGui")
+    bill.Name = "ESP_Billboard"
+    bill.Size = UDim2.new(0, 100, 0, 100)
+    bill.Adornee = character:FindFirstChild("Head")
+    bill.AlwaysOnTop = true
+    
+    local frame = Instance.new("Frame", bill)
+    frame.Size = UDim2.new(1, 0, 1, 0)
+    frame.BorderSizePixel = 2
+    frame.BorderColor3 = Color3.new(1, 0, 0)
+    frame.BackgroundTransparency = 1
+    return bill
+end
+
+local espBoxes = {}
+
+RunService.RenderStepped:Connect(function()
+    for _, v in pairs(workspace:GetChildren()) do
+        if v:IsA("Model") and v ~= LocalPlayer.Character then
+            local hrp = v:FindFirstChild("HumanoidRootPart")
+            local head = v:FindFirstChild("Head")
+            if hrp and head then
+                -- 檢查是否已創建ESP框
+                if espToggle then
+                    if not espBoxes[v] then
+                        espBoxes[v] = createBillboardGui(v)
+                        espBoxes[v].Parent = Camera
+                    end
+                else
+                    if espBoxes[v] then
+                        espBoxes[v]:Destroy()
+                        espBoxes[v] = nil
+                    end
+                end
+            end
+        end
+    end
+end)
+
+-- 穿牆功能：修改人物碰撞
+RunService.Heartbeat:Connect(function()
+    if LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart") then
+        for _, part in pairs(LocalPlayer.Character:GetChildren()) do
+            if part:IsA("BasePart") then
+                part.CanCollide = not wallhackToggle
+            end
+        end
+    end
+end)
