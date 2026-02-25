@@ -58,7 +58,7 @@ end)
 local targetEnemy = nil
 local espBoxes = {}
 
--- 創建長條形全身套住敵人
+-- 創建紅色長條框，覆蓋整個敵人身體
 local function createESPBox()
     local box = Drawing.new("Square")
     box.Color = Color3.new(1, 0, 0)
@@ -76,6 +76,7 @@ local function getClosestEnemy()
         if v:IsA("Model") and v ~= LocalPlayer.Character then
             local head = v:FindFirstChild("Head")
             local hrp = v:FindFirstChild("HumanoidRootPart")
+            local humanoid = v:FindFirstChildOfClass("Humanoid")
             if head and hrp then
                 local dist = (hrp.Position - LocalPlayer.Character.HumanoidRootPart.Position).magnitude
                 if dist < minDist then
@@ -100,7 +101,7 @@ RunService.RenderStepped:Connect(function()
     end
 end)
 
--- 透視（紅框）與敵人頭部位置框
+-- 透視（紅框）與敵人位置框
 RunService.RenderStepped:Connect(function()
     for _, v in pairs(workspace:GetChildren()) do
         if v:IsA("Model") and v ~= LocalPlayer.Character then
@@ -117,26 +118,38 @@ RunService.RenderStepped:Connect(function()
                     local headPos, onHead = Camera:WorldToScreenPoint(head.Position)
                     local hrpPos, onHrp = Camera:WorldToScreenPoint(hrp.Position)
                     if onHead and onHrp then
+                        -- 只畫覆蓋整個身體的長條
                         local distance = (hrp.Position - Camera.CFrame.Position).magnitude
                         local sizeMultiplier = math.clamp(300 / distance, 0.5, 2)
-                        local boxSize = 50 * sizeMultiplier
-                        box.Size = Vector2.new(boxSize, boxSize)
+                        local boxHeight =  (head.Position - hrp.Position).magnitude * sizeMultiplier
+                        local boxWidth = boxHeight * 0.4 -- 比例
+                        -- 計算中心點（頭到腳的中點）
                         local centerX = (headPos.X + hrpPos.X) / 2
                         local centerY = (headPos.Y + hrpPos.Y) / 2
-                        box.Position = Vector2.new(centerX - boxSize/2, centerY - boxSize/2)
+                        -- 設定框大小
+                        box.Size = Vector2.new(boxWidth, boxHeight)
+                        -- 設定框位置
+                        box.Position = Vector2.new(centerX - boxWidth/2, centerY - boxHeight/2)
                         box.Visible = true
                     else
-                        box.Visible = false
+                        if espBoxes[v] then espBoxes[v].Visible = false end
                     end
                 else
                     if espBoxes[v] then espBoxes[v].Visible = false end
+                end
+                -- 如果敵人死亡，刪除框
+                if humanoid and humanoid.Health <= 0 then
+                    if espBoxes[v] then
+                        espBoxes[v]:Remove()
+                        espBoxes[v] = nil
+                    end
                 end
             end
         end
     end
 end)
 
--- 釋放已經不存在的敵人（清理）
+-- 釋放已不存在的敵人（清理）
 RunService.Heartbeat:Connect(function()
     for v, box in pairs(espBoxes) do
         if not v.Parent then
@@ -148,7 +161,7 @@ RunService.Heartbeat:Connect(function()
     end
 end)
 
--- 穿牆功能：修改人物碰撞與透明度，並在角色重生時重新設置
+-- 穿牆功能：修改人物碰撞與透明度（此處不改變自己角色透明）
 local function setCharacterCollision(enabled)
     if LocalPlayer.Character then
         for _, part in pairs(LocalPlayer.Character:GetChildren()) do
@@ -173,26 +186,23 @@ local function applyWallhack()
     if LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart") then
         -- 讓自己穿牆
         setCharacterCollision(not wallhackToggle)
-        -- 改變透明度（可選，讓自己更隱形）
-        setCharacterTransparency(wallhackToggle and 0.5 or 0)
+        -- 不改變自己的透明度（保持透明度）
+        -- 你可以選擇不要改變透明度或保持原狀
     end
 end
 
--- 角色重生監聽，重設碰撞與透明度
+-- 角色重生監聽
 LocalPlayer.CharacterAdded:Connect(function(character)
-    -- 延遲確保角色完全建立
     wait(0.1)
     applyWallhack()
 end)
 
--- 在遊戲啟動時也執行一次
 if LocalPlayer.Character then
     delay(0.1, function()
         applyWallhack()
     end)
 end
 
--- 每幀持續應用（確保不被覆蓋）
 RunService.Heartbeat:Connect(function()
     applyWallhack()
 end)
