@@ -1,197 +1,200 @@
+-- 基本服務
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
-local Workspace = game.Workspace
-
+local UserInputService = game:GetService("UserInputService")
+local Workspace = game:GetService("Workspace")
 local LocalPlayer = Players.LocalPlayer
-local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
+local Camera = Workspace.CurrentCamera
 
--- 創建UI
-local ScreenGui = Instance.new("ScreenGui", PlayerGui)
-local MainFrame = Instance.new("Frame", ScreenGui)
-MainFrame.Size = UDim2.new(0, 300, 0, 350)
-MainFrame.Position = UDim2.new(0, 10, 0, 10)
-MainFrame.BackgroundColor3 = Color3.new(0, 0, 0)
-MainFrame.BackgroundTransparency = 0.3
-MainFrame.BorderSizePixel = 2
-MainFrame.BorderColor3 = Color3.new(1, 1, 1)
+-- UI設計
+local ScreenGui = Instance.new("ScreenGui", game:GetService("CoreGui"))
+local Frame = Instance.new("Frame", ScreenGui)
+Frame.Size = UDim2.new(0, 320, 0, 150)
+Frame.Position = UDim2.new(0, 10, 0, 10)
+Frame.BackgroundColor3 = Color3.new(0,0,0)
+Frame.BackgroundTransparency = 0.3
+Frame.BorderSizePixel = 2
+Frame.BorderColor3 = Color3.new(1,1,1)
 
-local function createButton(text, posY, parent)
-    local btn = Instance.new("TextButton", parent)
+local function createButton(name, posY, label)
+    local btn = Instance.new("TextButton", Frame)
     btn.Size = UDim2.new(0, 150, 0, 30)
     btn.Position = UDim2.new(0, 10, 0, posY)
-    btn.Text = text
-    btn.BackgroundColor3 = Color3.new(0.2, 0.2, 0.2)
-    btn.TextColor3 = Color3.new(1, 1, 1)
+    btn.Text = label
+    btn.BackgroundColor3 = Color3.new(0.2,0.2,0.2)
+    btn.TextColor3 = Color3.new(1,1,1)
     btn.Font = Enum.Font.SourceSansBold
+    btn.Name = name
     return btn
 end
 
-local toggleESPBtn = createButton("切換ESP（OFF）", 10, MainFrame)
-local toggleAimBtn = createButton("切換自動瞄準（OFF）", 50, MainFrame)
-local toggleWallBtn = createButton("穿牆：OFF", 90, MainFrame)
+local espBtn = createButton("ESP", 10, "透視（OFF）")
+local aimBtn = createButton("Aim", 50, "自瞄（OFF）")
+local wallBtn = createButton("Wall", 90, "穿牆（OFF）")
 
-local espEnabled = false
-local espBoxes = {}
+-- 狀態變數
+local espActive = false
+local aimActive = false
+local wallActive = false
 
-local wallHackEnabled = false
-local autoAimEnabled = false
-local playerRootPart = nil
+local espBoxes = {} --敵人紅框
 
-local function getPlayerRootPart()
-    if LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart") then
-        return LocalPlayer.Character.HumanoidRootPart
-    end
-    return nil
-end
-
-local function onCharacterAdded(character)
-    local hrp = character:WaitForChild("HumanoidRootPart", 5)
-    if hrp then
-        playerRootPart = hrp
+-- 取得玩家HumanoidRootPart
+local function getMyRootPart()
+    local chr = LocalPlayer.Character
+    if chr and chr:FindFirstChild("HumanoidRootPart") then
+        return chr.HumanoidRootPart
     end
 end
-if LocalPlayer.Character then
-    onCharacterAdded(LocalPlayer.Character)
-end
-LocalPlayer.CharacterAdded:Connect(onCharacterAdded)
+local myRootPart = getMyRootPart()
 
--- 透視（紅框）
+LocalPlayer.CharacterAdded:Connect(function()
+    wait(1)
+    myRootPart = getMyRootPart()
+end)
+
+-- 透視開關
 local function toggleESP()
-    espEnabled = not espEnabled
-    if espEnabled then
-        toggleESPBtn.Text = "透視：ON"
-        toggleESPBtn.BackgroundColor3 = Color3.new(1, 0, 0)
+    espActive = not espActive
+    if espActive then
+        espBtn.Text = "透視（ON）"
+        espBtn.BackgroundColor3 = Color3.new(1,0,0)
     else
-        toggleESPBtn.Text = "切換ESP（OFF）"
-        toggleESPBtn.BackgroundColor3 = Color3.new(0.2, 0.2, 0.2)
-        -- 移除所有ESP框
+        espBtn.Text = "透視（OFF）"
+        espBtn.BackgroundColor3 = Color3.new(0.2,0.2,0.2)
         for _, box in pairs(espBoxes) do
             if box and box.Parent then
-                box.Parent:Destroy()
+                box.Parent = nil
             end
         end
         espBoxes = {}
     end
 end
-toggleESPBtn.MouseButton1Click:Connect(toggleESP)
+espBtn.MouseButton1Click:Connect(toggleESP)
 
--- 穿牆
+-- 自瞄開關
+local function toggleAim()
+    aimActive = not aimActive
+    if aimActive then
+        aimBtn.Text = "自瞄（ON）"
+        aimBtn.BackgroundColor3 = Color3.new(1,0,0)
+    else
+        aimBtn.Text = "自瞄（OFF）"
+        aimBtn.BackgroundColor3 = Color3.new(0.2,0.2,0.2)
+    end
+end
+aimBtn.MouseButton1Click:Connect(toggleAim)
+
+-- 穿牆開關
 local function toggleWall()
-    wallHackEnabled = not wallHackEnabled
-    if wallHackEnabled then
-        toggleWallBtn.Text = "穿牆：ON"
-        toggleWallBtn.BackgroundColor3 = Color3.new(1, 0, 0)
-        if playerRootPart then
-            playerRootPart.CanCollide = false
-        end
+    wallActive = not wallActive
+    if wallActive then
+        wallBtn.Text = "穿牆（ON）"
+        wallBtn.BackgroundColor3 = Color3.new(1,0,0)
+        if myRootPart then myRootPart.CanCollide = false end
     else
-        toggleWallBtn.Text = "穿牆：OFF"
-        toggleWallBtn.BackgroundColor3 = Color3.new(0.8, 0.8, 0.8)
-        if playerRootPart then
-            playerRootPart.CanCollide = true
-        end
+        wallBtn.Text = "穿牆（OFF）"
+        wallBtn.BackgroundColor3 = Color3.new(0.2,0.2,0.2)
+        if myRootPart then myRootPart.CanCollide = true end
     end
 end
-toggleWallBtn.MouseButton1Click:Connect(toggleWall)
-
--- 自動瞄準
-local function toggleAutoAim()
-    autoAimEnabled = not autoAimEnabled
-    if autoAimEnabled then
-        toggleAimBtn.Text = "自動瞄準：ON"
-        toggleAimBtn.BackgroundColor3 = Color3.new(1, 0, 0)
-    else
-        toggleAimBtn.Text = "切換自動瞄準（OFF）"
-        toggleAimBtn.BackgroundColor3 = Color3.new(0.2, 0.2, 0.2)
-    end
-end
-toggleAimBtn.MouseButton1Click:Connect(toggleAutoAim)
+wallBtn.MouseButton1Click:Connect(toggleWall)
 
 -- 主循環
 RunService.RenderStepped:Connect(function()
-    -- ESP（紅框）
-    if espEnabled then
+    -- 透視敵人
+    if espActive then
         for _, plr in pairs(Players:GetPlayers()) do
             if plr ~= LocalPlayer and plr.Character and plr.Character:FindFirstChild("HumanoidRootPart") then
-                local hrp = plr.Character.HumanoidRootPart
-                local box = espBoxes[plr]
-                if not box or not box.Parent then
-                    box = Instance.new("BoxHandleAdornment")
-                    box.Adornee = hrp
-                    box.Size = hrp.Size
-                    box.AlwaysOnTop = true
+                if not espBoxes[plr] then
+                    local box = Instance.new("BoxHandleAdornment")
+                    box.Adornee = plr.Character.HumanoidRootPart
+                    box.Size = plr.Character.HumanoidRootPart.Size
+                    box.Color3 = Color3.new(1,0,0)
+                    box.Transparency = 0.3
                     box.ZIndex = 10
-                    box.Color3 = Color3.new(1, 0, 0)
-                    box.Transparency = 0.5
+                    box.AlwaysOnTop = true
                     box.Parent = Workspace
                     espBoxes[plr] = box
                 else
-                    box.Adornee = hrp
+                    espBoxes[plr].Adornee = plr.Character.HumanoidRootPart
                 end
             end
         end
-        -- 移除不存在的玩家
+        -- 移除不存在的
         for plr, box in pairs(espBoxes) do
             if not plr.Character or not plr.Character:FindFirstChild("HumanoidRootPart") then
                 if box and box.Parent then
-                    box.Parent:Destroy()
+                    box.Parent = nil
                 end
                 espBoxes[plr] = nil
             end
         end
     end
 
-    -- 穿牆（自己角色）
-    if playerRootPart then
-        if wallHackEnabled then
-            playerRootPart.CanCollide = false
-        else
-            playerRootPart.CanCollide = true
-        end
+    -- 穿牆
+    if myRootPart then
+        myRootPart.CanCollide = not wallActive
     end
 
-    -- 自動瞄準
-    if autoAimEnabled then
-        local myPos = getPlayerRootPart().Position
-        local closestPlr = nil
+    -- 自瞄
+    if aimActive then
         local closestDist = math.huge
+        local targetPlr = nil
+        local myPos = getMyRootPart().Position
         for _, plr in pairs(Players:GetPlayers()) do
             if plr ~= LocalPlayer and plr.Character and plr.Character:FindFirstChild("HumanoidRootPart") then
                 -- 排除隊友和屍體
-                if plr.Team and LocalPlayer.Team and plr.Team == LocalPlayer.Team then
-                    continue
-                end
-                if plr.Character:FindFirstChildOfClass("Humanoid") and plr.Character.Humanoid.Health <= 0 then
-                    continue
-                end
+                if plr.Team and LocalPlayer.Team and plr.Team == LocalPlayer.Team then continue end
+                local humanoid=plr.Character:FindFirstChildOfClass("Humanoid")
+                if humanoid and humanoid.Health<=0 then continue end
                 local hrp = plr.Character.HumanoidRootPart
                 local dist = (hrp.Position - myPos).magnitude
                 if dist < closestDist then
                     closestDist = dist
-                    closestPlr = plr
+                    targetPlr = plr
                 end
             end
         end
-        if closestPlr and closestPlr.Character and closestPlr.Character:FindFirstChild("HumanoidRootPart") then
-            local targetHRP = closestPlr.Character.HumanoidRootPart
-            local camera = Workspace.CurrentCamera
-            local camCF = camera.CFrame
-            local targetPos = targetHRP.CFrame.Position
+        -- 轉頭對準
+        if targetPlr and targetPlr.Character and targetPlr.Character:FindFirstChild("HumanoidRootPart") then
+            local targetPos = targetPlr.Character.HumanoidRootPart.Position
+            local camCF = Camera.CFrame
             local newCF = CFrame.lookAt(camCF.Position, targetPos)
-            camera.CFrame = newCF
+            Camera.CFrame = newCF
         end
     end
 end)
 
--- UI事件
-toggleWallBtn.MouseButton1Click:Connect(function()
-    toggleWall()
-end)
-
-toggleESPBtn.MouseButton1Click:Connect(function()
-    toggleESP()
-end)
-
-toggleAimBtn.MouseButton1Click:Connect(function()
-    toggleAutoAim()
+-- 模擬開槍，黏到敵人頭上（穿牆爆頭）
+UserInputService.InputBegan:Connect(function(input, gameProcessed)
+    if gameProcessed then return end
+    if input.UserInputType == Enum.UserInputType.MouseButton1 then
+        -- 找最近的敵人頭部
+        local closestDist = math.huge
+        local hitHead = nil
+        local myPos = getMyRootPart().Position
+        for _, plr in pairs(Players:GetPlayers()) do
+            if plr ~= LocalPlayer and plr.Character and plr.Character:FindFirstChild("Head") then
+                if not plr.Character:FindFirstChildOfClass("Humanoid") then continue end
+                local humanoid=plr.Character:FindFirstChildOfClass("Humanoid")
+                if humanoid and humanoid.Health<=0 then continue end
+                -- 排除隊友
+                if plr.Team and LocalPlayer.Team and plr.Team == LocalPlayer.Team then continue end
+                local head = plr.Character.Head
+                local dist = (head.Position - myPos).magnitude
+                if dist < closestDist then
+                    closestDist=dist
+                    hitHead = head
+                end
+            end
+        end
+        if hitHead then
+            -- 模擬子彈黏到頭上造成爆頭
+            local humanoid=hitHead.Parent:FindFirstChildOfClass("Humanoid")
+            if humanoid then
+                humanoid.Health=0 -- 爆頭
+            end
+        end
+    end
 end)
