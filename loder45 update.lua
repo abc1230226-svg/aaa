@@ -1,10 +1,11 @@
--- 客戶端腳本（用於Delta注入器）
+-- 這個腳本適用於Delta注入器，請確保在支持Drawing的遊戲環境下運行
+
 local RunService = game:GetService("RunService")
 local Players = game:GetService("Players")
 local LocalPlayer = Players.LocalPlayer
 local Camera = workspace.CurrentCamera
 
--- 創建UI
+-- 創建UI界面
 local ScreenGui = Instance.new("ScreenGui")
 ScreenGui.Name = "ESP_Aimbot_Wallhack"
 ScreenGui.Parent = game:GetService("CoreGui")
@@ -28,9 +29,9 @@ local function createButton(text, posY)
     return btn
 end
 
-local espToggle = false -- ESP開關
-local aimbotToggle = false -- 自瞄開關
-local wallhackToggle = false -- 穿牆開關
+local espToggle = false
+local aimbotToggle = false
+local wallhackToggle = false
 
 local espButton = createButton("ESP (穿牆) OFF", 10)
 local aimbotButton = createButton("自瞄 OFF", 50)
@@ -52,10 +53,9 @@ wallhackButton.MouseButton1Click:Connect(function()
     wallhackButton.Text = "穿牆 " .. (wallhackToggle and "ON" or "OFF")
 end)
 
--- 變數
-local espBoxes = {}
+-- 創建長條矩形框（用於敵人位置）
+local drawingBoxes = {}
 
--- 創建紅色長條矩形框，覆蓋整個敵人身體
 local function createESPBox()
     local box = Drawing.new("Square")
     box.Color = Color3.new(1, 0, 0)
@@ -65,7 +65,7 @@ local function createESPBox()
     return box
 end
 
--- 找最近敵人
+-- 獲取最近敵人
 local function getClosestEnemy()
     local minDist = math.huge
     local closest = nil
@@ -86,7 +86,7 @@ local function getClosestEnemy()
     return closest
 end
 
--- 自瞄
+-- 自瞄功能
 RunService.RenderStepped:Connect(function()
     if aimbotToggle then
         local target = getClosestEnemy()
@@ -97,7 +97,7 @@ RunService.RenderStepped:Connect(function()
     end
 end)
 
--- 主要畫框和清理
+-- 主循環：畫框和清理
 RunService.RenderStepped:Connect(function()
     for _, v in pairs(workspace:GetChildren()) do
         if v:IsA("Model") and v ~= LocalPlayer.Character then
@@ -106,48 +106,50 @@ RunService.RenderStepped:Connect(function()
             local humanoid = v:FindFirstChildOfClass("Humanoid")
             if head and hrp and humanoid and humanoid.Health > 0 then
                 if espToggle then
-                    if not espBoxes[v] then
-                        espBoxes[v] = createESPBox()
+                    if not drawingBoxes[v] then
+                        drawingBoxes[v] = createESPBox()
                     end
-                    local box = espBoxes[v]
-                    local headPos, onHead = Camera:WorldToScreenPoint(head.Position)
-                    local hrpPos, onHrp = Camera:WorldToScreenPoint(hrp.Position)
+                    local box = drawingBoxes[v]
+                    local headScreenPos, onHead = Camera:WorldToScreenPoint(head.Position)
+                    local hrpScreenPos, onHrp = Camera:WorldToScreenPoint(hrp.Position)
                     if onHead and onHrp then
-                        -- 計算長條框大小
                         local distance = (hrp.Position - Camera.CFrame.Position).magnitude
                         local sizeMultiplier = math.clamp(300 / distance, 0.5, 2)
-                        local boxHeight = (head.Position - hrp.Position).magnitude * sizeMultiplier * 1.5
-                        local boxWidth = boxHeight * 0.4
-                        local centerX = (headPos.X + hrpPos.X) / 2
-                        local centerY = (headPos.Y + hrpPos.Y) / 2
-                        box.Size = Vector2.new(boxWidth, boxHeight)
-                        box.Position = Vector2.new(centerX - boxWidth/2, centerY - boxHeight/2)
+                        local height = (head.Position - hrp.Position).magnitude * sizeMultiplier * 1.5
+                        local width = height * 0.4
+                        local centerX = (headScreenPos.X + hrpScreenPos.X) / 2
+                        local centerY = (headScreenPos.Y + hrpScreenPos.Y) / 2
+                        box.Size = Vector2.new(width, height)
+                        box.Position = Vector2.new(centerX - width/2, centerY - height/2)
                         box.Visible = true
                     else
-                        if espBoxes[v] then espBoxes[v].Visible = false end
+                        if drawingBoxes[v] then
+                            drawingBoxes[v].Visible = false
+                        end
                     end
                 else
-                    if espBoxes[v] then espBoxes[v].Visible = false end
+                    if drawingBoxes[v] then
+                        drawingBoxes[v].Visible = false
+                    end
                 end
-                -- 死亡自動移除
+                -- 死亡自動移除框
                 if humanoid and humanoid.Health <= 0 then
-                    if espBoxes[v] then
-                        espBoxes[v]:Remove()
-                        espBoxes[v] = nil
+                    if drawingBoxes[v] then
+                        drawingBoxes[v]:Remove()
+                        drawingBoxes[v] = nil
                     end
                 end
             else
-                -- 如果敵人已死或不在，移除框
-                if espBoxes[v] then
-                    espBoxes[v]:Remove()
-                    espBoxes[v] = nil
+                if drawingBoxes[v] then
+                    drawingBoxes[v]:Remove()
+                    drawingBoxes[v] = nil
                 end
             end
         end
     end
 end)
 
--- 穿牆：不改變自己透明度，只改變碰撞
+-- 穿牆功能
 local function applyWallhack()
     if LocalPlayer.Character then
         for _, part in pairs(LocalPlayer.Character:GetChildren()) do
@@ -158,7 +160,7 @@ local function applyWallhack()
     end
 end
 
--- 監聽角色重生
+-- 角色重生監聽
 LocalPlayer.CharacterAdded:Connect(function()
     wait(0.2)
     applyWallhack()
