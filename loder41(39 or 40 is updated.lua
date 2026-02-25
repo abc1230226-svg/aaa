@@ -8,9 +8,9 @@ local Camera = workspace.CurrentCamera
 -- 創建UI
 local ScreenGui = Instance.new("ScreenGui")
 ScreenGui.Name = "ESP_Aimbot_Wallhack"
-ScreenGui.ResetOnSpawn = false
 ScreenGui.Parent = game:GetService("CoreGui")
-ScreenGui.Enabled = true
+ScreenGui.ResetOnSpawn = false
+ScreenGui.Enabled = true -- 確保UI啟用
 
 local Frame = Instance.new("Frame", ScreenGui)
 Frame.Size = UDim2.new(0, 220, 0, 150)
