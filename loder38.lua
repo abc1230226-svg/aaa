@@ -8,6 +8,7 @@ local Camera = Workspace.CurrentCamera
 
 -- UI設計
 local ScreenGui = Instance.new("ScreenGui", game:GetService("CoreGui"))
+ScreenGui.Enabled = true
 local Frame = Instance.new("Frame", ScreenGui)
 Frame.Size = UDim2.new(0, 320, 0, 150)
 Frame.Position = UDim2.new(0, 10, 0, 10)
