@@ -8,22 +8,8 @@ ScreenGui.Name = "ESP_Perspective"
 ScreenGui.Parent = game:GetService("CoreGui")
 ScreenGui.ResetOnSpawn = false
 
-local enemyBoxes = {}
+local enemyHighlights = {} -- 儲存敵人Highlight
 
-local function createBox()
-    local box = Drawing.new("Square")
-    box.Color = Color3.new(1, 0, 0) -- 紅色框框
-    box.Thickness = 2
-    box.Transparency = 0.5
-    box.Visible = false
-    return box
-end
-
-local espEnabled = false
-local aimbotEnabled = false -- 改成轉向
-local wallhackEnabled = false
-
--- 按鈕UI
 local function createButton(text, posY)
     local btn = Instance.new("TextButton", ScreenGui)
     btn.Size = UDim2.new(0, 200, 0, 30)
@@ -38,6 +24,10 @@ end
 local espButton = createButton("ESP (遠近透視) OFF", 10)
 local aimbotButton = createButton("人物轉向敵人 OFF", 50)
 local wallhackButton = createButton("穿牆 OFF", 90)
+
+local espEnabled = false
+local aimbotEnabled = false
+local wallhackEnabled = false
 
 espButton.MouseButton1Click:Connect(function()
     espEnabled = not espEnabled
@@ -74,8 +64,9 @@ local function getClosestEnemy()
     return closest
 end
 
+-- 自瞄：轉向敵人
 RunService.RenderStepped:Connect(function()
-    -- 人物轉向敵人
+    -- 自瞄
     if aimbotEnabled then
         local target = getClosestEnemy()
         if target and target:FindFirstChild("HumanoidRootPart") and LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart") then
@@ -88,54 +79,45 @@ RunService.RenderStepped:Connect(function()
         end
     end
 
-    -- 透視投影與紅框框
+    -- 透視（紅框）套在敵人身上
     for _, v in pairs(workspace:GetChildren()) do
         if v:IsA("Model") and v ~= LocalPlayer.Character then
-            local head = v:FindFirstChild("Head")
-            local hrp = v:FindFirstChild("HumanoidRootPart")
             local humanoid = v:FindFirstChildOfClass("Humanoid")
-            if head and hrp and humanoid and humanoid.Health > 0 then
-                -- 繪製紅框
+            local hrp = v:FindFirstChild("HumanoidRootPart")
+            if humanoid and hrp and humanoid.Health > 0 then
+                -- 建立或更新Highlight
                 if espEnabled then
-                    if not enemyBoxes[v] then
-                        enemyBoxes[v] = createBox()
-                    end
-                    local box = enemyBoxes[v]
-                    local headPos, onHead = Camera:WorldToScreenPoint(head.Position)
-                    local hrpPos, onHrp = Camera:WorldToScreenPoint(hrp.Position)
-                    if onHead and onHrp then
-                        -- 計算距離與大小
-                        local distance = (hrp.Position - Camera.CFrame.Position).magnitude
-                        local sizeMultiplier = math.clamp(300 / distance, 0.5, 2)
-                        local height = (head.Position - hrp.Position).magnitude * sizeMultiplier * 1.5
-                        local width = height * 0.4
-                        local centerX = (headPos.X + hrpPos.X) / 2
-                        local centerY = (headPos.Y + hrpPos.Y) / 2
-                        -- 設定矩形
-                        box.Size = Vector2.new(width, height)
-                        box.Position = Vector2.new(centerX - width/2, centerY - height/2)
-                        box.Visible = true
+                    if not enemyHighlights[v] then
+                        local hl = Instance.new("Highlight")
+                        hl.Name = "EnemyHighlight"
+                        hl.Parent = v
+                        hl.Adornee = v
+                        hl.FillColor = Color3.new(1, 0, 0)
+                        hl.OutlineColor = Color3.new(1, 0, 0)
+                        hl.FillTransparency = 0.5
+                        hl.OutlineTransparency = 0
+                        enemyHighlights[v] = hl
                     else
-                        if enemyBoxes[v] then
-                            enemyBoxes[v].Visible = false
-                        end
+                        enemyHighlights[v].Enabled = true
                     end
                 else
-                    if enemyBoxes[v] then
-                        enemyBoxes[v].Visible = false
+                    -- 取消Highlight
+                    if enemyHighlights[v] then
+                        enemyHighlights[v].Enabled = false
                     end
                 end
                 -- 死亡自動移除
                 if humanoid and humanoid.Health <= 0 then
-                    if enemyBoxes[v] then
-                        enemyBoxes[v]:Remove()
-                        enemyBoxes[v] = nil
+                    if enemyHighlights[v] then
+                        enemyHighlights[v]:Destroy()
+                        enemyHighlights[v] = nil
                     end
                 end
             else
-                if enemyBoxes[v] then
-                    enemyBoxes[v]:Remove()
-                    enemyBoxes[v] = nil
+                -- 不在畫面或死掉，移除Highlight
+                if enemyHighlights[v] then
+                    enemyHighlights[v]:Destroy()
+                    enemyHighlights[v] = nil
                 end
             end
         end
