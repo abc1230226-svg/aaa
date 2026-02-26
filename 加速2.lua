@@ -5,13 +5,12 @@ local UserInputService = game:GetService("UserInputService")
 
 -- 建立UI
 local ScreenGui = Instance.new("ScreenGui")
-ScreenGui.Name = "ESP_Perspective"
+ScreenGui.Name = "SpeedJumpUI"
 ScreenGui.Parent = game:GetService("CoreGui")
 ScreenGui.ResetOnSpawn = false
 
--- 既有UI元素（你的原始）
-local enemyHighlights = {} -- 儲存敵人Highlight
-
+-- 既有功能（你的原始）
+local enemyHighlights = {}
 local function createButton(text, posY)
     local btn = Instance.new("TextButton", ScreenGui)
     btn.Size = UDim2.new(0, 200, 0, 30)
@@ -66,7 +65,6 @@ local function getClosestEnemy()
     return closest
 end
 
--- 自瞄：轉向敵人
 RunService.RenderStepped:Connect(function()
     -- 自瞄
     if aimbotEnabled then
@@ -121,7 +119,6 @@ RunService.RenderStepped:Connect(function()
     end
 end)
 
--- 穿牆功能
 local function applyWallhack()
     if LocalPlayer.Character then
         for _, part in pairs(LocalPlayer.Character:GetChildren()) do
@@ -147,12 +144,12 @@ RunService.Heartbeat:Connect(function()
     applyWallhack()
 end)
 
--- ==== 新增：跑速與連跳功能 ====
+-- ==== 新增：跑速與無限跳躍功能 ====
 
--- UI：跑速滑桿與連跳按鈕
+-- UI：跑速滑桿與無限跳躍按鈕
 local speedLabel = Instance.new("TextLabel", ScreenGui)
 speedLabel.Size = UDim2.new(0, 200, 0, 20)
-speedLabel.Position = UDim2.new(0, 10, 0, 130)
+speedLabel.Position = UDim2.new(0, 10, 0, 220)
 speedLabel.Text = "跑速: 16"
 speedLabel.TextColor3 = Color3.new(1,1,1)
 speedLabel.BackgroundColor3 = Color3.new(0,0,0)
@@ -160,7 +157,7 @@ speedLabel.TextScaled = true
 
 local speedSlider = Instance.new("Slider", ScreenGui)
 speedSlider.Size = UDim2.new(0, 200, 0, 20)
-speedSlider.Position = UDim2.new(0, 10, 0, 155)
+speedSlider.Position = UDim2.new(0, 10, 0, 245)
 speedSlider.Min = 16
 speedSlider.Max = 100
 speedSlider.Value = 16
@@ -172,21 +169,20 @@ speedSlider.Changed:Connect(function()
     updateSpeedLabel(speedSlider.Value)
 end)
 
-local jumpToggleButton = Instance.new("TextButton", ScreenGui)
-jumpToggleButton.Size = UDim2.new(0, 200, 0, 30)
-jumpToggleButton.Position = UDim2.new(0, 10, 0, 185)
-jumpToggleButton.Text = "連續跳躍 OFF"
-jumpToggleButton.TextColor3 = Color3.new(1,1,1)
-jumpToggleButton.BackgroundColor3 = Color3.new(0.2,0.2,0.2)
-jumpToggleButton.BorderSizePixel = 1
+local infiniteJumpButton = Instance.new("TextButton", ScreenGui)
+infiniteJumpButton.Size = UDim2.new(0, 200, 0, 30)
+infiniteJumpButton.Position = UDim2.new(0, 10, 0, 280)
+infiniteJumpButton.Text = "無限跳躍 OFF"
+infiniteJumpButton.TextColor3 = Color3.new(1,1,1)
+infiniteJumpButton.BackgroundColor3 = Color3.new(0.2,0.2,0.2)
+infiniteJumpButton.BorderSizePixel = 1
 
-local jumpEnabled = false
-jumpToggleButton.MouseButton1Click:Connect(function()
-    jumpEnabled = not jumpEnabled
-    jumpToggleButton.Text = "連續跳躍 " .. (jumpEnabled and "ON" or "OFF")
+local infiniteJumpEnabled = false
+infiniteJumpButton.MouseButton1Click:Connect(function()
+    infiniteJumpEnabled = not infiniteJumpEnabled
+    infiniteJumpButton.Text = "無限跳躍 " .. (infiniteJumpEnabled and "ON" or "OFF")
 end)
 
--- 變數：跑速
 local currentSpeed = speedSlider.Value
 
 -- 更新跑速
@@ -194,20 +190,20 @@ speedSlider.Changed:Connect(function()
     currentSpeed = speedSlider.Value
 end)
 
--- 自動調整速度與連跳
+-- 自動設置速度與無限跳躍
 RunService.Heartbeat:Connect(function()
     if LocalPlayer.Character and LocalPlayer.Character:FindFirstChildOfClass("Humanoid") then
         local humanoid = LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
         -- 設定跑速
         humanoid.WalkSpeed = currentSpeed
-        -- 如果啟用連跳，自動跳
-        if jumpEnabled then
+        -- 如果啟用無限跳躍，自動跳
+        if infiniteJumpEnabled then
             humanoid.Jump = true
         end
     end
 end)
 
--- 按空白鍵：實現單次跳躍
+-- 按空白鍵：單次跳躍
 UserInputService.InputBegan:Connect(function(input, gp)
     if gp then return end
     if input.KeyCode == Enum.KeyCode.Space then
