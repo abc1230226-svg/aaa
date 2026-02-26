@@ -19,8 +19,6 @@ local function createBox()
     return box
 end
 
-local espEnabled = false
-local aimbotEnabled = false
 local wallhackEnabled = false
 
 -- 按鈕UI
@@ -35,18 +33,7 @@ local function createButton(text, posY)
     return btn
 end
 
-
-local wallhackButton = createButton("穿牆 OFF", 90)
-
-espButton.MouseButton1Click:Connect(function()
-    espEnabled = not espEnabled
-    espButton.Text = "ESP (遠近透視) " .. (espEnabled and "ON" or "OFF")
-end)
-
-aimbotButton.MouseButton1Click:Connect(function()
-    aimbotEnabled = not aimbotEnabled
-    aimbotButton.Text = "自瞄 " .. (aimbotEnabled and "ON" or "OFF")
-end)
+local wallhackButton = createButton("穿牆 OFF", 10)
 
 wallhackButton.MouseButton1Click:Connect(function()
     wallhackEnabled = not wallhackEnabled
@@ -74,14 +61,6 @@ local function getClosestEnemy()
 end
 
 RunService.RenderStepped:Connect(function()
-    -- 自瞄
-    if aimbotEnabled then
-        local target = getClosestEnemy()
-        if target and target:FindFirstChild("Head") then
-            local headPos = target.Head.Position
-            Camera.CFrame = CFrame.new(LocalPlayer.Character.HumanoidRootPart.Position, headPos)
-        end
-    end
 
     -- 透視投影
     for _, v in pairs(workspace:GetChildren()) do
@@ -90,7 +69,7 @@ RunService.RenderStepped:Connect(function()
             local hrp = v:FindFirstChild("HumanoidRootPart")
             local humanoid = v:FindFirstChildOfClass("Humanoid")
             if head and hrp and humanoid and humanoid.Health > 0 then
-                if espEnabled then
+                if true then -- 這裡不再檢查espEnabled
                     if not enemyBoxes[v] then
                         enemyBoxes[v] = createBox()
                     end
