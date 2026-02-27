@@ -1,19 +1,17 @@
--- 這是注入器用的完整腳本
-
--- 避免重複運行
-if _G.AimAssistInjected then return end
-_G.AimAssistInjected=true
+-- 完整版注入腳本（包含UI與hook功能）
+if _G.AimAssist_Inject then return end
+_G.AimAssist_Inject=true
 
 local Players=game:GetService("Players")
 local RunService=game:GetService("RunService")
 local UserInputService=game:GetService("UserInputService")
-local workspace=game.Workspace
+local workspace=game:GetService("Workspace")
 local LocalPlayer=Players.LocalPlayer
 
--- UI界面
+-- 創建UI
 local ScreenGui=Instance.new("ScreenGui")
 ScreenGui.Name="AimAssistUI"
-ScreenGui.Parent=game:GetService("CoreGui") -- 注入器用CoreGui不會被屏蔽
+ScreenGui.Parent=game:GetService("CoreGui") -- 注入器用CoreGui避免被屏蔽
 
 local MainFrame=Instance.new("Frame")
 MainFrame.Size=UDim2.new(0,300,0,250)
@@ -94,7 +92,7 @@ local function refreshExcludeList()
     end
 end
 
--- UI切換
+-- UI按鈕功能
 toggleUIBtn.MouseButton1Click:Connect(function()
     MainFrame.Visible=not MainFrame.Visible
     if MainFrame.Visible then
@@ -137,24 +135,6 @@ end)
 
 refreshExcludeList()
 
--- 監聽並hook子彈射擊事件
-local shootEvent=game:GetService("ReplicatedStorage"):FindFirstChild("ShootEvent")
-local originalFire=shootEvent and shootEvent.FireServer
-if originalFire then
-    hookfunction(shootEvent.FireServer, function(...)
-        local args={...}
-        local targetPos=args[1]
-        if uiSettings.allowThroughWalls then
-            local target=getClosestEnemy()
-            if target and target.Character and target.Character:FindFirstChild("Head") then
-                targetPos=target.Character.Head.Position
-            end
-            args[1]=targetPos
-        end
-        return originalFire(unpack(args))
-    end)
-end
-
 -- 判斷敵人
 local function isTeammateOrDead(enemy)
     if not enemy.Character then return true end
@@ -196,7 +176,7 @@ local function aimAtTarget(target)
     end
 end
 
--- 自動爆頭功能
+-- 自動爆頭
 _G.AutoFire=false
 local autoFireRunning=false
 local function startAutoFire()
@@ -221,14 +201,13 @@ local function stopAutoFire()
     _G.AutoFire=false
 end
 
--- 按住左鍵啟動/停止自動爆頭
+-- 按住左鍵觸發
 UserInputService.InputBegan:Connect(function(input,gameProcessed)
     if gameProcessed then return end
     if input.UserInputType==Enum.UserInputType.MouseButton1 then
         startAutoFire()
     end
 end)
-
 UserInputService.InputEnded:Connect(function(input,gameProcessed)
     if gameProcessed then return end
     if input.UserInputType==Enum.UserInputType.MouseButton1 then
@@ -236,9 +215,28 @@ UserInputService.InputEnded:Connect(function(input,gameProcessed)
     end
 end)
 
--- 每幀刷新
+-- hook子彈發射（假設用ShootEvent）
+local shootEvent=game:GetService("ReplicatedStorage"):FindFirstChild("ShootEvent")
+local originalFire=shootEvent and hookfunction(shootEvent.FireServer,function(...)
+    local args={...}
+    local targetPos=args[1]
+    if uiSettings.allowThroughWalls then
+        local target=getClosestEnemy()
+        if target and target.Character and target.Character:FindFirstChild("Head") then
+            targetPos=target.Character.Head.Position
+        end
+        args[1]=targetPos
+    end
+    return shootEvent.FireServer(unpack(args))
+end)
+
+-- 監控並畫出ESP
 RunService.RenderStepped:Connect(function()
-    -- ESP
+    -- 清除舊的ESP
+    for _,v in pairs(workspace:GetChildren()) do
+        if v:IsA("BoxHandleAdornment") then v:Destroy() end
+    end
+    -- 畫ESP
     if uiSettings.esp then
         for _,enemy in ipairs(Players:GetPlayers()) do
             if enemy.Character and enemy.Character:FindFirstChild("HumanoidRootPart") then
