@@ -1,4 +1,5 @@
--- 完全穿透障礙物的子彈
+-- 完全穿透障礙物的子彈範例
+
 local RunService = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
 local Debris = game:GetService("Debris")
@@ -34,25 +35,25 @@ local function shoot()
     local origin = workspace.CurrentCamera.CFrame.Position
     local targetPos = mouse.Hit.p
 
-    -- 用Raycast找敵人頭部位置（忽略障礙物）
-    local direction = (targetPos - origin).Unit * 10000
+    -- 用Raycast找到敵人頭部位置（忽略障礙物）
+    local direction = (targetPos - origin).Unit * 10000 -- 無限長，確保命中
     local params = RaycastParams.new()
     params.FilterDescendantsInstances = {workspace}
     params.CollisionGroup = nil
     params.IgnoreWater = true
-    -- 不設定碰撞過濾，讓子彈直接穿透
+    -- 不過濾任何物件，讓子彈穿透所有障礙物
 
     local result = workspace:Raycast(origin, direction, params)
     local hitPosition
     if result and result.Instance then
-        -- 若命中敵人，取命中點
+        -- 命中敵人
         hitPosition = result.Position
     else
-        -- 若未命中，設定遠端點
+        -- 沒有命中，設為遠端點
         hitPosition = origin + direction
     end
 
-    -- 創建子彈，從槍口飛向敵人頭部
+    -- 創建子彈
     local bullet = Instance.new("Part")
     bullet.Size = Vector3.new(0.2, 0.2, 0.2)
     bullet.CFrame = CFrame.new(origin)
@@ -62,12 +63,12 @@ local function shoot()
     bullet.Material = Enum.Material.Neon
     bullet.Parent = workspace
 
-    -- 設定子彈移動時間
+    -- 計算飛行時間
     local distance = (hitPosition - origin).magnitude
     local speed = 300 -- 子彈速度
     local travelTime = distance / speed
 
-    -- 子彈移動到目標位置
+    -- 使用Tween移動子彈
     local tweenInfo = TweenInfo.new(travelTime, Enum.EasingStyle.Linear)
     local tween = TweenService:Create(bullet, tweenInfo, {CFrame= CFrame.new(hitPosition)})
     tween:Play()
@@ -76,6 +77,7 @@ local function shoot()
     Debris:AddItem(bullet, travelTime + 0.5)
 end
 
+-- 持續射擊控制
 RunService.RenderStepped:Connect(function()
     if isEnabled and UserInputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton1) then
         if canShoot then
