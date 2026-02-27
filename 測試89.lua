@@ -1,3 +1,4 @@
+-- 穿牆射擊 + UI切換腳本
 local RunService = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
 local Debris = game:GetService("Debris")
@@ -7,8 +8,31 @@ local TweenService = game:GetService("TweenService")
 local LocalPlayer = Players.LocalPlayer
 local mouse = LocalPlayer:GetMouse()
 
-local shooting = false
-local shootInterval = 0.2 -- 控制射擊速度
+-- 創建UI
+local ScreenGui = Instance.new("ScreenGui")
+ScreenGui.Name = "WallPiercingGUI"
+ScreenGui.Parent = game:GetService("CoreGui") -- 使用CoreGui確保在所有遊戲中都能顯示
+
+local toggleButton = Instance.new("TextButton")
+toggleButton.Size = UDim2.new(0, 220, 0, 50)
+toggleButton.Position = UDim2.new(0.5, -110, 0.1, 0)
+toggleButton.BackgroundColor3 = Color3.new(0, 0.5, 0)
+toggleButton.TextColor3 = Color3.new(1, 1, 1)
+toggleButton.Text = "穿牆射擊：關閉"
+toggleButton.Parent = ScreenGui
+
+local isEnabled = false
+local canShoot = true
+local shootInterval = 0.2 -- 控制射擊頻率
+
+toggleButton.MouseButton1Click:Connect(function()
+    isEnabled = not isEnabled
+    if isEnabled then
+        toggleButton.Text = "穿牆射擊：開啟"
+    else
+        toggleButton.Text = "穿牆射擊：關閉"
+    end
+end)
 
 local function shoot()
     local origin = workspace.CurrentCamera.CFrame.Position
@@ -45,12 +69,13 @@ local function shoot()
 end
 
 RunService.RenderStepped:Connect(function()
-    if UserInputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton1) then
-        if not shooting then
-            shooting = true
+    if isEnabled and UserInputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton1) then
+        if canShoot then
+            canShoot = false
             shoot()
-            wait(shootInterval)
-            shooting = false
+            delay(shootInterval, function()
+                canShoot = true
+            end)
         end
     end
 end)
