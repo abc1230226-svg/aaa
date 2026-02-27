@@ -1,4 +1,4 @@
--- 完整版注入腳本（包含UI與hook功能）
+-- 完整版注入腳本（包括UI和功能）
 if _G.AimAssist_Inject then return end
 _G.AimAssist_Inject=true
 
@@ -8,10 +8,10 @@ local UserInputService=game:GetService("UserInputService")
 local workspace=game:GetService("Workspace")
 local LocalPlayer=Players.LocalPlayer
 
--- 創建UI
+-- 創建UI界面
 local ScreenGui=Instance.new("ScreenGui")
 ScreenGui.Name="AimAssistUI"
-ScreenGui.Parent=game:GetService("CoreGui") -- 注入器用CoreGui避免被屏蔽
+ScreenGui.Parent=game:GetService("CoreGui") -- 注入器用CoreGui
 
 local MainFrame=Instance.new("Frame")
 MainFrame.Size=UDim2.new(0,300,0,250)
@@ -92,7 +92,7 @@ local function refreshExcludeList()
     end
 end
 
--- UI按鈕功能
+-- UI按鈕事件
 toggleUIBtn.MouseButton1Click:Connect(function()
     MainFrame.Visible=not MainFrame.Visible
     if MainFrame.Visible then
@@ -197,11 +197,12 @@ local function startAutoFire()
         autoFireRunning=false
     end)
 end
+
 local function stopAutoFire()
     _G.AutoFire=false
 end
 
--- 按住左鍵觸發
+-- 按住左鍵自動爆頭
 UserInputService.InputBegan:Connect(function(input,gameProcessed)
     if gameProcessed then return end
     if input.UserInputType==Enum.UserInputType.MouseButton1 then
@@ -215,29 +216,30 @@ UserInputService.InputEnded:Connect(function(input,gameProcessed)
     end
 end)
 
--- hook子彈發射（假設用ShootEvent）
+-- hook子彈發射事件（假設用ShootEvent）
 local shootEvent=game:GetService("ReplicatedStorage"):FindFirstChild("ShootEvent")
-local originalFire=shootEvent and hookfunction(shootEvent.FireServer,function(...)
-    local args={...}
-    local targetPos=args[1]
-    if uiSettings.allowThroughWalls then
-        local target=getClosestEnemy()
-        if target and target.Character and target.Character:FindFirstChild("Head") then
-            targetPos=target.Character.Head.Position
+if shootEvent then
+    local originalFire=hookfunction(shootEvent.FireServer,function(...)
+        local args={...}
+        local targetPos=args[1]
+        if uiSettings.allowThroughWalls then
+            local target=getClosestEnemy()
+            if target and target.Character and target.Character:FindFirstChild("Head") then
+                targetPos=target.Character.Head.Position
+            end
+            args[1]=targetPos
         end
-        args[1]=targetPos
-    end
-    return shootEvent.FireServer(unpack(args))
-end)
+        return shootEvent.FireServer(unpack(args))
+    end)
+end
 
--- 監控並畫出ESP
+-- 每幀更新
 RunService.RenderStepped:Connect(function()
-    -- 清除舊的ESP
-    for _,v in pairs(workspace:GetChildren()) do
-        if v:IsA("BoxHandleAdornment") then v:Destroy() end
-    end
-    -- 畫ESP
+    -- ESP
     if uiSettings.esp then
+        for _,v in pairs(workspace:GetChildren()) do
+            if v:IsA("BoxHandleAdornment") then v:Destroy() end
+        end
         for _,enemy in ipairs(Players:GetPlayers()) do
             if enemy.Character and enemy.Character:FindFirstChild("HumanoidRootPart") then
                 if not isTeammateOrDead(enemy) then
