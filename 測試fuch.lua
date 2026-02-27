@@ -2,14 +2,14 @@ local RunService = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
 local Debris = game:GetService("Debris")
 local Players = game:GetService("Players")
-local TweenService = game:GetService("TweenService")
 
 local LocalPlayer = Players.LocalPlayer
+local Camera = workspace.CurrentCamera
 local Mouse = LocalPlayer:GetMouse()
 
 -- UI設定
 local ScreenGui = Instance.new("ScreenGui")
-ScreenGui.Name = "PierceAimGUI"
+ScreenGui.Name = "R6HeadshotAimGUI"
 ScreenGui.Parent = game:GetService("CoreGui")
 
 local toggleButton = Instance.new("TextButton")
@@ -17,7 +17,7 @@ toggleButton.Size = UDim2.new(0, 220, 0, 50)
 toggleButton.Position = UDim2.new(0.5, -110, 0.1, 0)
 toggleButton.BackgroundColor3 = Color3.new(0, 0.5, 0)
 toggleButton.TextColor3 = Color3.new(1, 1, 1)
-toggleButton.Text = "子彈穿牆：關閉"
+toggleButton.Text = "頭部必中：關閉"
 toggleButton.Parent = ScreenGui
 
 local isEnabled = false
@@ -26,17 +26,16 @@ local shootInterval = 0.2
 
 toggleButton.MouseButton1Click:Connect(function()
     isEnabled = not isEnabled
-    toggleButton.Text = isEnabled and "子彈穿牆：開啟" or "子彈穿牆：關閉"
+    toggleButton.Text = isEnabled and "頭部必中：開啟" or "頭部必中：關閉"
 end)
 
 local function shoot()
-    local origin = workspace.CurrentCamera.CFrame.Position
-    local targetPos = Mouse.Hit.p
+    local origin = Camera.CFrame.Position
+    local direction = Camera.CFrame.LookVector * 10000
 
-    -- Raycast找到敵人位置（忽略所有障礙物）
-    local direction = (targetPos - origin).Unit * 10000
+    -- 射線找到敵人（假設敵人是R6模型）
     local params = RaycastParams.new()
-    params.FilterDescendantsInstances = {workspace} -- 不過濾任何東西
+    params.FilterDescendantsInstances = {workspace}
     params.CollisionGroup = nil
     params.IgnoreWater = true
 
@@ -44,10 +43,21 @@ local function shoot()
 
     local hitPosition
     if result and result.Instance then
-        -- 命中敵人
-        hitPosition = result.Position
+        local hitPart = result.Instance
+        if hitPart and hitPart.Parent then
+            local character = hitPart.Parent
+            -- 確保是角色且是R6模型（通常是5個Parts）
+            if character:FindFirstChild("Head") then
+                local head = character:FindFirstChild("Head")
+                hitPosition = head.Position
+            else
+                -- 若找不到Head，使用命中位置
+                hitPosition = result.Position
+            end
+        else
+            hitPosition = origin + direction
+        end
     else
-        -- 沒有命中，設為遠端點
         hitPosition = origin + direction
     end
 
@@ -57,11 +67,11 @@ local function shoot()
     bullet.CFrame = CFrame.new(origin)
     bullet.Anchored = true
     bullet.CanCollide = false
-    bullet.BrickColor = BrickColor.new("Bright yellow")
+    bullet.BrickColor = BrickColor.new("Bright red")
     bullet.Material = Enum.Material.Neon
     bullet.Parent = workspace
 
-    -- 瞬間移動子彈到命中位置（模擬穿透）
+    -- 立即移動子彈到頭部位置（模擬擊中）
     bullet.CFrame = CFrame.new(hitPosition)
 
     -- 0.1秒後刪除子彈
