@@ -1,5 +1,3 @@
--- 完全穿透障礙物的子彈範例
-
 local RunService = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
 local Debris = game:GetService("Debris")
@@ -7,7 +5,7 @@ local Players = game:GetService("Players")
 local TweenService = game:GetService("TweenService")
 
 local LocalPlayer = Players.LocalPlayer
-local mouse = LocalPlayer:GetMouse()
+local Mouse = LocalPlayer:GetMouse()
 
 -- UI設定
 local ScreenGui = Instance.new("ScreenGui")
@@ -33,17 +31,17 @@ end)
 
 local function shoot()
     local origin = workspace.CurrentCamera.CFrame.Position
-    local targetPos = mouse.Hit.p
+    local targetPos = Mouse.Hit.p
 
-    -- 用Raycast找到敵人頭部位置（忽略障礙物）
-    local direction = (targetPos - origin).Unit * 10000 -- 無限長，確保命中
+    -- Raycast找到敵人位置（忽略所有障礙物）
+    local direction = (targetPos - origin).Unit * 10000
     local params = RaycastParams.new()
-    params.FilterDescendantsInstances = {workspace}
+    params.FilterDescendantsInstances = {workspace} -- 不過濾任何東西
     params.CollisionGroup = nil
     params.IgnoreWater = true
-    -- 不過濾任何物件，讓子彈穿透所有障礙物
 
     local result = workspace:Raycast(origin, direction, params)
+
     local hitPosition
     if result and result.Instance then
         -- 命中敵人
@@ -63,21 +61,13 @@ local function shoot()
     bullet.Material = Enum.Material.Neon
     bullet.Parent = workspace
 
-    -- 計算飛行時間
-    local distance = (hitPosition - origin).magnitude
-    local speed = 300 -- 子彈速度
-    local travelTime = distance / speed
+    -- 瞬間移動子彈到命中位置（模擬穿透）
+    bullet.CFrame = CFrame.new(hitPosition)
 
-    -- 使用Tween移動子彈
-    local tweenInfo = TweenInfo.new(travelTime, Enum.EasingStyle.Linear)
-    local tween = TweenService:Create(bullet, tweenInfo, {CFrame= CFrame.new(hitPosition)})
-    tween:Play()
-
-    -- 移除子彈
-    Debris:AddItem(bullet, travelTime + 0.5)
+    -- 0.1秒後刪除子彈
+    Debris:AddItem(bullet, 0.1)
 end
 
--- 持續射擊控制
 RunService.RenderStepped:Connect(function()
     if isEnabled and UserInputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton1) then
         if canShoot then
