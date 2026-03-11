@@ -18,6 +18,8 @@ toggleButton.TextColor3 = Color3.fromRGB(255, 255, 255)
 toggleButton.Text = "開啟無後座力"
 toggleButton.Parent = screenGui
 
+print("UI已創建") -- 確認UI創建
+
 -- 狀態變數
 local noRecoilEnabled = false
 local isShooting = false
@@ -33,14 +35,15 @@ toggleButton.MouseButton1Click:Connect(function()
     end
 end)
 
--- 模擬射擊（可改成你的射擊條件）
+-- 模擬射擊
 function shoot()
     if not noRecoilEnabled then return end
     lockedCFrame = Camera.CFrame
     isShooting = true
+    print("射擊") -- 追蹤射擊狀態
 end
 
--- 用鼠標左鍵射擊
+-- 鼠標左鍵射擊
 UserInputService.InputBegan:Connect(function(input, gameProcessed)
     if gameProcessed then return end
     if input.UserInputType == Enum.UserInputType.MouseButton1 then
@@ -51,6 +54,7 @@ end)
 -- 每幀保持相機角度
 RunService.RenderStepped:Connect(function()
     if noRecoilEnabled and isShooting and lockedCFrame then
-        Camera.CFrame = lockedCFrame
+        local camera = workspace.CurrentCamera
+        camera.CFrame = lockedCFrame
     end
 end)
