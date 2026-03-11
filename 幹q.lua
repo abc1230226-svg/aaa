@@ -9,7 +9,6 @@ local ScreenGui=Instance.new("ScreenGui")
 ScreenGui.Name="AimAssistUI"
 ScreenGui.Parent=game:GetService("CoreGui")
 
--- 控制界面框架
 local MainFrame=Instance.new("Frame")
 MainFrame.Size=UDim2.new(0,300,0,250)
 MainFrame.Position=UDim2.new(0,10,0,10)
@@ -17,14 +16,12 @@ MainFrame.BackgroundColor3=Color3.new(0,0,0)
 MainFrame.BackgroundTransparency=0.5
 MainFrame.Parent=ScreenGui
 
--- 顯示/隱藏控制界面按鈕
 local toggleUIBtn=Instance.new("TextButton")
 toggleUIBtn.Size=UDim2.new(0,150,0,30)
 toggleUIBtn.Position=UDim2.new(0,10,0,0)
 toggleUIBtn.Text="隱藏控制台"
 toggleUIBtn.Parent=MainFrame
 
--- 其他按鈕
 local buttonWidth=150
 local buttonHeight=30
 local startX=10
@@ -49,7 +46,6 @@ autoFireButton.Position=UDim2.new("0",startX,"0",startY+2*(buttonHeight+spacing)
 autoFireButton.Text="按住左鍵自動爆頭"
 autoFireButton.Parent=MainFrame
 
--- 排除名單下拉
 local excludeDropdown=Instance.new("TextButton")
 excludeDropdown.Size=UDim2.new(0,180,0,30)
 excludeDropdown.Position=UDim2.new("0",startX,startY+3*(buttonHeight+spacing),0)
@@ -65,7 +61,7 @@ excludeListFrame.Parent=MainFrame
 
 local excludedPlayers={} -- 排除名單
 
--- 控制整個UI隱藏/顯示
+-- 控制UI顯示
 local function toggleUI()
     MainFrame.Visible=not MainFrame.Visible
     if MainFrame.Visible then
@@ -97,7 +93,6 @@ local function isTeammateOrCorpse(enemy)
     return false
 end
 
--- 取得敵人（排除隊友和屍體）
 local function getEnemies()
     local t={}
     for _,v in ipairs(Players:GetPlayers()) do
@@ -112,7 +107,6 @@ local function getEnemies()
     return t
 end
 
--- 取得最近的敵人
 local function getClosestEnemy()
     local minDist=math.huge
     local target=nil
@@ -130,7 +124,6 @@ local function getClosestEnemy()
     return target
 end
 
--- 創建ESP
 local function createESP(v, color)
     local adornment=Instance.new("BoxHandleAdornment")
     adornment.Adornee=v.Character:FindFirstChild("HumanoidRootPart")
@@ -209,7 +202,6 @@ autoFireButton.MouseButton1Click:Connect(function()
     end
 end)
 
--- 排除玩家選擇
 local function refreshExcludeList()
     excludeListFrame:ClearAllChildren()
     local y=0
@@ -222,7 +214,6 @@ local function refreshExcludeList()
         btn.BackgroundColor3=Color3.new(0.3,0.3,0.3)
         btn.TextColor3=Color3.new(1,1,1)
         btn.MouseButton1Click:Connect(function()
-            -- 加入或移除排除名單
             local exists=table.find(excludedPlayers,player.Name)
             if exists then
                 table.remove(excludedPlayers,exists)
@@ -240,12 +231,10 @@ local function refreshExcludeList()
     end
 end
 
--- 點擊下拉切換排除列表
 excludeDropdown.MouseButton1Click:Connect(function()
     excludeListFrame.Visible=not excludeListFrame.Visible
 end)
 
--- 按鍵控制自動爆頭
 UserInputService.InputBegan:Connect(function(input, gameProcessed)
     if gameProcessed then return end
     if input.UserInputType==Enum.UserInputType.MouseButton1 then
@@ -262,7 +251,6 @@ UserInputService.InputEnded:Connect(function(input, gameProcessed)
     end
 end)
 
--- 控制整個UI顯示/隱藏
 toggleUIBtn.MouseButton1Click:Connect(function()
     toggleUI()
 end)
@@ -288,20 +276,10 @@ toggleRecoilBtn.MouseButton1Click:Connect(function()
     end
 end)
 
--- 監聽每幀，實現「無後座力」
+-- ================== 每幀監控與反作用 ==================
+
 RunService.RenderStepped:Connect(function()
-    -- 你原本的其他內容...
-    -- 這裡加入無後座力效果
-    if noRecoil and UserInputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton1) then
-        -- 固定相機角度
-        local cf=Camera.CFrame
-        Camera.CFrame=cf
-    end
-
-    -- 其他邏輯（ESP、AIM等）
-    -- 清除ESP
-    clearESP()
-
+    -- 其他功能（ESP、自動瞄準）
     if espEnabled then
         for _,enemy in ipairs(getEnemies()) do
             if enemy.Character and enemy.Character:FindFirstChild("HumanoidRootPart") then
@@ -316,8 +294,10 @@ RunService.RenderStepped:Connect(function()
             aimAtTarget(target)
         end
     end
-end)
 
--- 初始排除名單
-refreshExcludeList()
-print("UI和無後座力功能已載入")
+    -- 無後座力：保持角度不變
+    if noRecoil and UserInputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton1) then
+        local cf=Camera.CFrame
+        Camera.CFrame=cf -- 固定角度，不做變動
+    end
+end)
