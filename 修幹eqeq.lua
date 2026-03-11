@@ -25,7 +25,7 @@ local noRecoilEnabled = false
 local isShooting = false
 local lockedCFrame = nil
 
--- 切換開關
+-- 按鈕點擊切換
 toggleButton.MouseButton1Click:Connect(function()
     noRecoilEnabled = not noRecoilEnabled
     if noRecoilEnabled then
