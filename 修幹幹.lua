@@ -18,29 +18,31 @@ toggleButton.TextColor3 = Color3.fromRGB(255, 255, 255)
 toggleButton.Text = "開啟無後座力"
 toggleButton.Parent = screenGui
 
-print("UI已創建") -- 確認UI創建
+print("UI已創建") -- 確認UI創建成功
 
 -- 狀態變數
 local noRecoilEnabled = false
 local isShooting = false
 local lockedCFrame = nil
 
--- 按鈕點擊切換
+-- 切換開關
 toggleButton.MouseButton1Click:Connect(function()
     noRecoilEnabled = not noRecoilEnabled
     if noRecoilEnabled then
         toggleButton.Text = "關閉無後座力"
+        print("無後座力已開啟")
     else
         toggleButton.Text = "開啟無後座力"
+        print("無後座力已關閉")
     end
 end)
 
 -- 模擬射擊
-function shoot()
+local function shoot()
     if not noRecoilEnabled then return end
-    lockedCFrame = Camera.CFrame
+    lockedCFrame = Camera.CFrame -- 鎖定當前相機角度
     isShooting = true
-    print("射擊") -- 追蹤射擊狀態
+    print("射擊")
 end
 
 -- 鼠標左鍵射擊
