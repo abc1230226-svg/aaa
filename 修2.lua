@@ -1,10 +1,11 @@
--- 服務
 local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+local Camera = workspace.CurrentCamera
 
--- 創建UI界面
+-- 建立UI
 local ScreenGui = Instance.new("ScreenGui")
 ScreenGui.Name = "AimAssistUI"
-ScreenGui.Parent = game:GetService("CoreGui") -- 避免出錯
+ScreenGui.Parent = game:GetService("CoreGui")
 
 local MainFrame = Instance.new("Frame")
 MainFrame.Size = UDim2.new(0, 350, 0, 150)
@@ -39,10 +40,19 @@ StatusLabel.TextColor3 = Color3.new(1, 1, 1)
 StatusLabel.TextScaled = true
 StatusLabel.Parent = MainFrame
 
+local ShootButton = Instance.new("TextButton")
+ShootButton.Size = UDim2.new(0, 150, 0, 40)
+ShootButton.Position = UDim2.new(0, 10, 0, 90)
+ShootButton.Text = "射擊"
+ShootButton.TextColor3 = Color3.new(1, 1, 1)
+ShootButton.BackgroundColor3 = Color3.new(0.2, 0.2, 0.2)
+ShootButton.Parent = MainFrame
+
 -- 狀態變數
 local recoilEnabled = false
+local recoilOffset = Vector3.new(0,0,0)
 
--- 按鈕切換
+-- 切換UI狀態
 ToggleButton.MouseButton1Click:Connect(function()
     recoilEnabled = not recoilEnabled
     if recoilEnabled then
@@ -54,41 +64,30 @@ ToggleButton.MouseButton1Click:Connect(function()
     end
 end)
 
--- 模擬偏移值
-local recoilOffset = 0
-
--- 模擬射擊產生偏移（點擊UI按鈕或其他方式來模擬射擊）
+-- 模擬射擊
 local function simulateRecoil()
     if not recoilEnabled then
-        -- 當關閉時，偏移會增加（模擬射擊造成偏移）
-        recoilOffset = recoilOffset + math.random(2, 5)
+        -- 模擬射擊產生偏移（隨機偏移角度）
+        local angleX = math.random(-2, 2)
+        local angleY = math.random(-2, 2)
+        recoilOffset = Vector3.new(angleY, angleX, 0)
     else
-        -- 開啟無後座力時，不增加偏移
-        recoilOffset = 0
+        recoilOffset = Vector3.new(0,0,0)
     end
 end
 
--- 這裡添加一個按鈕來模擬射擊，讓用戶可以點擊
-local ShootButton = Instance.new("TextButton")
-ShootButton.Size = UDim2.new(0, 150, 0, 40)
-ShootButton.Position = UDim2.new(0, 10, 0, 90)
-ShootButton.Text = "射擊"
-ShootButton.TextColor3 = Color3.new(1, 1, 1)
-ShootButton.BackgroundColor3 = Color3.new(0.2, 0.2, 0.2)
-ShootButton.Parent = MainFrame
-
 ShootButton.MouseButton1Click:Connect(function()
     simulateRecoil()
-    print("射擊偏移：", recoilOffset)
+    print("偏移：", recoilOffset)
 end)
 
 -- 每幀更新
 RunService.RenderStepped:Connect(function()
-    -- 如果開啟無後座力則偏移永遠為0
     if recoilEnabled then
-        recoilOffset = 0
+        recoilOffset = Vector3.new(0,0,0)
     end
-    -- 你可以在這裡用 recoilOffset 控制相機或武器偏移
-    -- 這裡只示範輸出
-    -- print("偏移值：", recoilOffset)
+    -- 這裡將偏移應用到相機
+    -- 例如：將相機角度微調
+    -- 這裡假設你是用第一人稱
+    Camera.CFrame = Camera.CFrame * CFrame.Angles(math.rad(recoilOffset.X), math.rad(recoilOffset.Y), 0)
 end)
