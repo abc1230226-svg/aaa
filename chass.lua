@@ -2,7 +2,6 @@ local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local PlayerGui = player:WaitForChild("PlayerGui")
 
--- 建立UI
 local screenGui = Instance.new("ScreenGui")
 screenGui.Name = "ChessGUI"
 screenGui.Parent = PlayerGui
@@ -43,12 +42,15 @@ local function initBoard()
     for r=1,8 do
         board[r] = {}
         for c=1,8 do
-            board[r][c] = "."
+            -- 使用Unicode旗子字符
+            if r == 2 then
+                board[r][c] = "♙" -- 白兵
+            elseif r == 7 then
+                board[r][c] = "♟" -- 黑兵
+            else
+                board[r][c] = ""
+            end
         end
-    end
-    for c=1,8 do
-        board[2][c] = "P"
-        board[7][c] = "p"
     end
     updateBoardDisplay()
     setStatus("遊戲已初始化")
@@ -60,7 +62,7 @@ local function updateBoardDisplay()
             local index = (r-1)*8 + c
             local cell = cells[index]
             local p = board[r][c]
-            cell.Button.Text = p ~= "." and p or ""
+            cell.Button.Text = p ~= "" and p or ""
         end
     end
 end
@@ -71,7 +73,6 @@ end
 
 local selectedCell = nil
 
--- 點擊格子
 for _, cell in ipairs(cells) do
     cell.Button.MouseButton1Click:Connect(function()
         if not selectedCell then
@@ -80,11 +81,11 @@ for _, cell in ipairs(cells) do
         else
             local fr, fc = selectedCell.row, selectedCell.col
             local tr, tc = cell.row, cell.col
-            -- 簡單移動
-            if board[fr][fc] ~= "." then
+            -- 移動
+            if board[fr][fc] ~= "" then
                 board[tr][tc] = board[fr][fc]
-                board[fr][fc] = "."
-                setStatus("移動：R"..fr.."-C"..fc.." 到 R"..tr.."-C"..tc)
+                board[fr][fc] = ""
+                setStatus("移動：R"..fr.." C"..fc.." 到 R"..tr.." C"..tc)
                 updateBoardDisplay()
             end
             selectedCell = nil
@@ -92,48 +93,63 @@ for _, cell in ipairs(cells) do
     end)
 end
 
--- 用於存儲箭頭
-local arrowMarkers = {}
-
--- 畫箭頭（用紅色框框或文字模擬）
-local function drawArrow(fromRow, fromCol, toRow, toCol)
-    -- 先清除之前的箭頭
-    for _, arrow in ipairs(arrowMarkers) do
-        arrow:Destroy()
+local arrowParts = {}
+local function clearArrows()
+    for _, part in ipairs(arrowParts) do
+        part:Destroy()
     end
-    arrowMarkers = {}
-    -- 繪製新箭頭（用 Label 或 Frame 模擬）
+    arrowParts = {}
+end
+
+-- 畫箭頭（用長方形旋轉模擬箭頭）
+local function drawArrow(fromRow, fromCol, toRow, toCol)
+    clearArrows()
     local fromIndex = (fromRow-1)*8 + fromCol
     local toIndex = (toRow-1)*8 + toCol
     local fromCell = cells[fromIndex]
     local toCell = cells[toIndex]
     
-    local arrow = Instance.new("Frame")
-    arrow.Size = UDim2.new(0, 10, 0, 10)
-    arrow.BackgroundColor3 = Color3.new(1, 0, 0)
-    arrow.Position = fromCell.Button.Position + UDim2.new(0.5,0,0.5,0) - UDim2.new(0,5,0,5)
-    arrow.AnchorPoint = Vector2.new(0.5, 0.5)
-    arrow.Parent = boardFrame
-    table.insert(arrowMarkers, arrow)
+    local startPos = fromCell.Button.Position + UDim2.new(0.5,0,0.5,0)
+    local endPos = toCell.Button.Position + UDim2.new(0.5,0,0.5,0)
     
-    -- 可以擴展畫直線或箭頭，這裡用簡單的紅點示意
-    -- 也可用Line或其他圖形實作
+    local line = Instance.new("Frame")
+    line.Parent = boardFrame
+    line.AnchorPoint = Vector2.new(0.5, 0.5)
+    
+    -- 計算距離和角度
+    local deltaX = (endPos.X.Offset - startPos.X.Offset)
+    local deltaY = (endPos.Y.Offset - startPos.Y.Offset)
+    local length = math.sqrt(deltaX^2 + deltaY^2)
+    local angle = math.atan2(deltaY, deltaX)
+    
+    line.Size = UDim2.new(0, length, 0, 4)
+    line.Position = startPos
+    line.Rotation = math.deg(angle)
+    line.BackgroundColor3 = Color3.new(1, 0, 0)
+    table.insert(arrowParts, line)
+    
+    -- 箭頭頭部（小三角形）可以用另一個Frame模擬
+    local arrowHead = Instance.new("Frame")
+    arrowHead.Size = UDim2.new(0, 10, 0, 10)
+    arrowHead.Position = endPos
+    arrowHead.AnchorPoint = Vector2.new(0.5, 0.5)
+    arrowHead.Rotation = math.deg(angle)
+    arrowHead.BackgroundColor3 = Color3.new(1, 0, 0)
+    arrowHead.Shape = Enum.PartType.Block
+    arrowHead.Parent = boardFrame
+    table.insert(arrowParts, arrowHead)
 end
 
--- AI分析最佳步（簡單策略：移動最前的兵）
+-- 獲取推薦步（例如：最前面的白兵向前走）
 local function getBestMove()
     for r=1,8 do
         for c=1,8 do
             local p = board[r][c]
-            if p ~= "." then
-                if p == "p" then
-                    if r > 1 and board[r-1][c] == "." then
-                        return {from={r=r, c=c}, to={r=r-1, c=c}}
-                    end
-                elseif p == "P" then
-                    if r < 8 and board[r+1][c] == "." then
-                        return {from={r=r, c=c}, to={r=r+1, c=c}}
-                    end
+            if p ~= "" then
+                if p == "♙" and r > 1 and board[r-1][c] == "" then
+                    return {from={r=r, c=c}, to={r=r-1, c=c}}
+                elseif p == "♟" and r < 8 and board[r+1][c] == "" then
+                    return {from={r=r, c=c}, to={r=r+1, c=c}}
                 end
             end
         end
@@ -144,9 +160,8 @@ end
 local function showBestMove()
     local move = getBestMove()
     if move then
-        -- 標記箭頭
         drawArrow(move.from.r, move.from.c, move.to.r, move.to.c)
-        setStatus("建議步：R"..move.from.r.." C"..move.from.c.." 到 R"..move.to.r.." C"..move.to.c)
+        setStatus("建議步：R"..move.from.r.." C"..move.from.c.." → R"..move.to.r.." C"..move.to.c)
         return move
     else
         setStatus("沒有建議步")
@@ -154,19 +169,14 @@ local function showBestMove()
     end
 end
 
--- 讓玩家點擊“建議步”按鈕來標記
-local suggestButton = Instance.new("TextButton")
-suggestButton.Size = UDim2.new(0, 200, 0, 50)
-suggestButton.Position = UDim2.new(0.5, -100, 0, 50)
-suggestButton.Text = "顯示建議步"
-suggestButton.Parent = screenGui
+local suggestBtn = Instance.new("TextButton")
+suggestBtn.Size = UDim2.new(0, 200, 0, 50)
+suggestBtn.Position = UDim2.new(0.5, -100, 0, 50)
+suggestBtn.Text = "顯示建議步"
+suggestBtn.Parent = screenGui
 
-suggestButton.MouseButton1Click:Connect(function()
-    local move = showBestMove()
-    -- 你可以在這裡加入自動移動或其他功能
+suggestBtn.MouseButton1Click:Connect(function()
+    showBestMove()
 end)
 
--- 初始化遊戲
 initBoard()
-
--- 你也可以加入自動AI走步等功能
