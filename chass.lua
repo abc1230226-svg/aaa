@@ -16,7 +16,7 @@ statusLabel.TextScaled = true
 statusLabel.Parent = screenGui
 
 local gridSize = 8
-local cellSize = UDim2.new(0, 40, 0, 40)
+local cellSize = UDim2.new(0, 50, 0, 50)
 local boardFrame = Instance.new("Frame")
 boardFrame.Size = UDim2.new(0, cellSize.X.Offset * gridSize, 0, cellSize.Y.Offset * gridSize)
 boardFrame.Position = UDim2.new(0.5, -boardFrame.Size.X.Offset/2, 0.5, -boardFrame.Size.Y.Offset/2)
@@ -38,20 +38,19 @@ end
 
 local board = {}
 local function initBoard()
-    board = {}
-    for r=1,8 do
-        board[r] = {}
-        for c=1,8 do
-            -- 使用Unicode旗子字符
-            if r == 2 then
-                board[r][c] = "♙" -- 白兵
-            elseif r == 7 then
-                board[r][c] = "♟" -- 黑兵
-            else
-                board[r][c] = ""
-            end
-        end
-    end
+    board = {
+        -- 白方（第1、2行）
+        { "♖", "♘", "♗", "♕", "♔", "♗", "♘", "♖" },
+        { "♙", "♙", "♙", "♙", "♙", "♙", "♙", "♙" },
+        -- 空格
+        { "", "", "", "", "", "", "", "" },
+        { "", "", "", "", "", "", "", "" },
+        { "", "", "", "", "", "", "", "" },
+        { "", "", "", "", "", "", "", "" },
+        -- 黑方（第7、8行）
+        { "♟", "♟", "♟", "♟", "♟", "♟", "♟", "♟" },
+        { "♜", "♞", "♝", "♛", "♚", "♝", "♞", "♜" },
+    }
     updateBoardDisplay()
     setStatus("遊戲已初始化")
 end
@@ -61,8 +60,8 @@ local function updateBoardDisplay()
         for c=1,8 do
             local index = (r-1)*8 + c
             local cell = cells[index]
-            local p = board[r][c]
-            cell.Button.Text = p ~= "" and p or ""
+            local piece = board[r][c]
+            cell.Button.Text = piece ~= "" and piece or ""
         end
     end
 end
@@ -73,20 +72,127 @@ end
 
 local selectedCell = nil
 
+local function isValidMove(fromR, fromC, toR, toC)
+    local p = board[fromR][fromC]
+    local target = board[toR][toC]
+    -- 簡單規則：只能移動自己顏色的棋子，且走法符合規則
+    if p == "" then return false end
+    if p == "♙" then
+        -- 白兵
+        if fromC == toC then
+            if toR == fromR + 1 and target == "" then
+                return true
+            end
+            -- 初次可走兩格
+            if fromR == 2 and toR == fromR + 2 and target == "" and board[fromR+1][fromC] == "" then
+                return true
+            end
+        elseif math.abs(toC - fromC) == 1 and toR == fromR + 1 and target ~= "" then
+            -- 吃子
+            return true
+        end
+    elseif p == "♟" then
+        -- 黑兵
+        if fromC == toC then
+            if toR == fromR - 1 and target == "" then
+                return true
+            end
+            if fromR == 7 and toR == fromR - 2 and target == "" and board[fromR-1][fromC] == "" then
+                return true
+            end
+        elseif math.abs(toC - fromC) == 1 and toR == fromR - 1 and target ~= "" then
+            return true
+        end
+    elseif p == "♖" then
+        -- 車：直線
+        if fromR == toR then
+            local step = (toC > fromC) and 1 or -1
+            for c=fromC+step, toC-step, step do
+                if board[fromR][c] ~= "" then return false end
+            end
+            return true
+        elseif fromC == toC then
+            local step = (toR > fromR) and 1 or -1
+            for r=fromR+step, toR-1, step do
+                if board[r][fromC] ~= "" then return false end
+            end
+            return true
+        end
+    elseif p == "♘" then
+        -- 馬
+        local dr = math.abs(toR - fromR)
+        local dc = math.abs(toC - fromC)
+        if (dr==2 and dc==1) or (dr==1 and dc==2) then
+            return true
+        end
+    elseif p == "♝" then
+        -- 象：對角線
+        if math.abs(toR - fromR) == math.abs(toC - fromC) then
+            local rStep = (toR > fromR) and 1 or -1
+            local cStep = (toC > fromC) and 1 or -1
+            local r,c = fromR + rStep, fromC + cStep
+            while r ~= toR and c ~= toC do
+                if board[r][c] ~= "" then return false end
+                r = r + rStep
+                c = c + cStep
+            end
+            return true
+        end
+    elseif p == "♛" then
+        -- 后：直線或對角線
+        if fromR == toR then
+            local step = (toC > fromC) and 1 or -1
+            for c=fromC+step, toC-step, step do
+                if board[fromR][c] ~= "" then return false end
+            end
+            return true
+        elseif fromC == toC then
+            local step = (toR > fromR) and 1 or -1
+            for r=fromR+step, toR-1, step do
+                if board[r][fromC] ~= "" then return false end
+            end
+            return true
+        elseif math.abs(toR - fromR) == math.abs(toC - fromC) then
+            local rStep = (toR > fromR) and 1 or -1
+            local cStep = (toC > fromC) and 1 or -1
+            local r,c = fromR + rStep, fromC + cStep
+            while r ~= toR and c ~= toC do
+                if board[r][c] ~= "" then return false end
+                r = r + rStep
+                c = c + cStep
+            end
+            return true
+        end
+    elseif p == "♚" then
+        -- 王
+        if math.abs(toR - fromR) <= 1 and math.abs(toC - fromC) <=1 then
+            return true
+        end
+    end
+    return false
+end
+
 for _, cell in ipairs(cells) do
     cell.Button.MouseButton1Click:Connect(function()
         if not selectedCell then
-            selectedCell = {row=cell.row, col=cell.col}
-            setStatus("選擇起點：R"..cell.row.." C"..cell.col)
+            -- 選擇起點
+            local r, c = cell.row, cell.col
+            if board[r][c] ~= "" then
+                selectedCell = {row=r, col=c}
+                setStatus("選擇移動的棋子：R"..r.." C"..c)
+            end
         else
+            -- 選擇終點
             local fr, fc = selectedCell.row, selectedCell.col
             local tr, tc = cell.row, cell.col
-            -- 移動
-            if board[fr][fc] ~= "" then
+            if isValidMove(fr, fc, tr, tc) then
+                -- 移動
                 board[tr][tc] = board[fr][fc]
                 board[fr][fc] = ""
-                setStatus("移動：R"..fr.." C"..fc.." 到 R"..tr.." C"..tc)
                 updateBoardDisplay()
+                setStatus("已移動")
+            else
+                setStatus("非法移動")
             end
             selectedCell = nil
         end
@@ -94,6 +200,7 @@ for _, cell in ipairs(cells) do
 end
 
 local arrowParts = {}
+
 local function clearArrows()
     for _, part in ipairs(arrowParts) do
         part:Destroy()
@@ -101,36 +208,33 @@ local function clearArrows()
     arrowParts = {}
 end
 
--- 畫箭頭（用長方形旋轉模擬箭頭）
 local function drawArrow(fromRow, fromCol, toRow, toCol)
     clearArrows()
     local fromIndex = (fromRow-1)*8 + fromCol
     local toIndex = (toRow-1)*8 + toCol
     local fromCell = cells[fromIndex]
     local toCell = cells[toIndex]
-    
+
     local startPos = fromCell.Button.Position + UDim2.new(0.5,0,0.5,0)
     local endPos = toCell.Button.Position + UDim2.new(0.5,0,0.5,0)
-    
+
     local line = Instance.new("Frame")
     line.Parent = boardFrame
     line.AnchorPoint = Vector2.new(0.5, 0.5)
-    
-    -- 計算距離和角度
+
     local deltaX = (endPos.X.Offset - startPos.X.Offset)
     local deltaY = (endPos.Y.Offset - startPos.Y.Offset)
     local length = math.sqrt(deltaX^2 + deltaY^2)
     local angle = math.atan2(deltaY, deltaX)
-    
+
     line.Size = UDim2.new(0, length, 0, 4)
     line.Position = startPos
     line.Rotation = math.deg(angle)
     line.BackgroundColor3 = Color3.new(1, 0, 0)
     table.insert(arrowParts, line)
-    
-    -- 箭頭頭部（小三角形）可以用另一個Frame模擬
+
     local arrowHead = Instance.new("Frame")
-    arrowHead.Size = UDim2.new(0, 10, 0, 10)
+    arrowHead.Size = UDim2.new(0, 12, 0, 12)
     arrowHead.Position = endPos
     arrowHead.AnchorPoint = Vector2.new(0.5, 0.5)
     arrowHead.Rotation = math.deg(angle)
@@ -140,16 +244,18 @@ local function drawArrow(fromRow, fromCol, toRow, toCol)
     table.insert(arrowParts, arrowHead)
 end
 
--- 獲取推薦步（例如：最前面的白兵向前走）
+-- AI：簡單策略，找出所有白兵並建議前方走一步
 local function getBestMove()
     for r=1,8 do
         for c=1,8 do
             local p = board[r][c]
-            if p ~= "" then
-                if p == "♙" and r > 1 and board[r-1][c] == "" then
-                    return {from={r=r, c=c}, to={r=r-1, c=c}}
-                elseif p == "♟" and r < 8 and board[r+1][c] == "" then
+            if p == "♙" then
+                if r<8 and board[r+1][c] == "" then
                     return {from={r=r, c=c}, to={r=r+1, c=c}}
+                end
+            elseif p == "♟" then
+                if r>1 and board[r-1][c] == "" then
+                    return {from={r=r, c=c}, to={r=r-1, c=c}}
                 end
             end
         end
@@ -162,10 +268,8 @@ local function showBestMove()
     if move then
         drawArrow(move.from.r, move.from.c, move.to.r, move.to.c)
         setStatus("建議步：R"..move.from.r.." C"..move.from.c.." → R"..move.to.r.." C"..move.to.c)
-        return move
     else
         setStatus("沒有建議步")
-        return nil
     end
 end
 
@@ -179,4 +283,5 @@ suggestBtn.MouseButton1Click:Connect(function()
     showBestMove()
 end)
 
+-- 初始化
 initBoard()
