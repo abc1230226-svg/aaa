@@ -4,6 +4,7 @@
 --// 新增：王車易位、吃過路兵、將軍保護、基本將死/和棋判斷、升變皇后
 
 local Players = game:GetService("Players")
+local UserInputService = game:GetService("UserInputService")
 local player = Players.LocalPlayer
 
 -- 很重要：這份一定要放在 LocalScript。
@@ -21,12 +22,34 @@ if oldGui then
     oldGui:Destroy()
 end
 
+--====================================================
+-- GUI：照你原本那種寫法，但用 PlayerGui 才能在 Roblox Studio 正常顯示
+--====================================================
+
+--====================================================
+-- GUI：照你原本那種寫法，但整個棋盤選單可以拖曳移動
+--====================================================
+
 local screenGui = Instance.new("ScreenGui")
 screenGui.Name = "ChessGUI"
+screenGui.Parent = PlayerGui
 screenGui.ResetOnSpawn = false
 screenGui.IgnoreGuiInset = true
 screenGui.DisplayOrder = 999999
-screenGui.Parent = PlayerGui
+screenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+screenGui.Enabled = true
+
+-- 把棋盤、按鈕、狀態文字全部包在這個 menuFrame 裡
+-- 之後只要拖曳上方標題列，就能整個一起移動
+local menuFrame = Instance.new("Frame", screenGui)
+menuFrame.Name = "Chess_Menu_Frame"
+menuFrame.Size = UDim2.new(0, 640, 0, 500)
+menuFrame.Position = UDim2.new(0, 60, 0, 60)
+menuFrame.BackgroundColor3 = Color3.new(0.08, 0.08, 0.08)
+menuFrame.BorderSizePixel = 2
+menuFrame.Active = true
+menuFrame.Visible = true
+menuFrame.ZIndex = 1
 
 local gridSize = 8
 local cellPixel = 48
@@ -35,7 +58,7 @@ local cells = {}
 local selectedCell = nil
 local currentBestMove = nil
 local sideToMove = "w" -- w = 白棋，b = 黑棋
-local searchDepth = 2
+local searchDepth = 3 -- 3 起跳比較強；覺得卡可以切回 2
 
 local gameState = {
     castlingRights = {
@@ -88,44 +111,94 @@ local blackPieces = {
 }
 
 local function createButton(text, posY)
-    local btn = Instance.new("TextButton", screenGui)
-    btn.Size = UDim2.new(0, 210, 0, 38)
-    btn.Position = UDim2.new(0.5, -105, 0, posY)
+    local btn = Instance.new("TextButton", menuFrame)
+    btn.Size = UDim2.new(0, 210, 0, 34)
+    btn.Position = UDim2.new(0, 10, 0, posY)
     btn.Text = text
     btn.TextColor3 = Color3.new(1, 1, 1)
     btn.BackgroundColor3 = Color3.new(0.2, 0.2, 0.2)
     btn.BorderSizePixel = 1
     btn.TextScaled = true
     btn.Font = Enum.Font.GothamBold
+    btn.Visible = true
+    btn.Active = true
+    btn.ZIndex = 20
     return btn
 end
 
-local statusLabel = Instance.new("TextLabel", screenGui)
-statusLabel.Size = UDim2.new(1, 0, 0, 50)
-statusLabel.Position = UDim2.new(0, 0, 1, -50)
+local statusLabel = Instance.new("TextLabel", menuFrame)
+statusLabel.Size = UDim2.new(0, 610, 0, 44)
+statusLabel.Position = UDim2.new(0, 15, 0, 445)
 statusLabel.BackgroundColor3 = Color3.new(0, 0, 0)
 statusLabel.TextColor3 = Color3.new(1, 1, 1)
 statusLabel.Text = "初始化"
 statusLabel.TextScaled = true
 statusLabel.Font = Enum.Font.GothamBold
+statusLabel.ZIndex = 20
 
-local titleLabel = Instance.new("TextLabel", screenGui)
-titleLabel.Size = UDim2.new(0, 400, 0, 40)
-titleLabel.Position = UDim2.new(0.5, -200, 0, 8)
+local titleLabel = Instance.new("TextLabel", menuFrame)
+titleLabel.Size = UDim2.new(1, 0, 0, 38)
+titleLabel.Position = UDim2.new(0, 0, 0, 0)
 titleLabel.BackgroundColor3 = Color3.new(0.1, 0.1, 0.1)
 titleLabel.TextColor3 = Color3.new(1, 1, 1)
-titleLabel.Text = "Chess Recommend Move - Full Rules"
+titleLabel.Text = "Chess Recommend Move - Full Rules    ｜拖曳這裡移動"
 titleLabel.TextScaled = true
 titleLabel.Font = Enum.Font.GothamBold
+titleLabel.Active = true
+titleLabel.ZIndex = 30
 
-local boardFrame = Instance.new("Frame", screenGui)
+-- 拖曳 menu：按住 titleLabel 移動整個棋盤選單
+local dragging = false
+local dragInput = nil
+local dragStart = nil
+local startPos = nil
+
+local function updateDrag(input)
+    local delta = input.Position - dragStart
+    menuFrame.Position = UDim2.new(
+        startPos.X.Scale,
+        startPos.X.Offset + delta.X,
+        startPos.Y.Scale,
+        startPos.Y.Offset + delta.Y
+    )
+end
+
+titleLabel.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+        dragging = true
+        dragStart = input.Position
+        startPos = menuFrame.Position
+
+        input.Changed:Connect(function()
+            if input.UserInputState == Enum.UserInputState.End then
+                dragging = false
+            end
+        end)
+    end
+end)
+
+titleLabel.InputChanged:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then
+        dragInput = input
+    end
+end)
+
+UserInputService.InputChanged:Connect(function(input)
+    if input == dragInput and dragging then
+        updateDrag(input)
+    end
+end)
+
+local boardFrame = Instance.new("Frame", menuFrame)
 boardFrame.Size = UDim2.new(0, cellPixel * gridSize, 0, cellPixel * gridSize)
-boardFrame.Position = UDim2.new(0.5, -(cellPixel * gridSize) / 2, 0.5, -(cellPixel * gridSize) / 2)
+boardFrame.Position = UDim2.new(0, 240, 0, 50)
 boardFrame.BackgroundColor3 = Color3.new(0, 0, 0)
 boardFrame.BorderSizePixel = 2
+boardFrame.ZIndex = 5
 
 local suggestBtn = createButton("顯示白棋推薦步", 55)
-local resetBtn = createButton("重置棋盤", 100)
+local resetBtn = createButton("重置棋盤", 98)
+local depthBtn = createButton("AI 深度：3", 141)
 
 local function setStatus(text)
     statusLabel.Text = "狀態：" .. tostring(text)
@@ -689,30 +762,260 @@ local function generateLegalMoves(b, side, state)
     return legal
 end
 
+local function hasPawnOnFile(b, side, file)
+    local pawn = side == "w" and "♙" or "♟"
+
+    for r = 1, 8 do
+        if b[r][file] == pawn then
+            return true
+        end
+    end
+
+    return false
+end
+
+local function isPassedPawn(b, r, c, side)
+    local enemyPawn = side == "w" and "♟" or "♙"
+    local dir = side == "w" and -1 or 1
+    local row = r + dir
+
+    while isInside(row, c) do
+        for dc = -1, 1 do
+            local file = c + dc
+            if isInside(row, file) and b[row][file] == enemyPawn then
+                return false
+            end
+        end
+        row += dir
+    end
+
+    return true
+end
+
+local function centerBonus(r, c, scale)
+    local dist = math.abs(r - 4.5) + math.abs(c - 4.5)
+    return math.floor((7 - dist) * scale)
+end
+
+local function countMaterialWithoutKings(b)
+    local total = 0
+
+    for r = 1, 8 do
+        for c = 1, 8 do
+            local p = b[r][c]
+            if p ~= "♔" and p ~= "♚" then
+                total += pieceValue[p] or 0
+            end
+        end
+    end
+
+    return total
+end
+
 local function evaluateBoard(b)
+    -- 比原本更強：材料分 + 位置分 + 兵型 + 王安全 + 升變威脅
     local score = 0
+    local bishopCount = {w = 0, b = 0}
+    local endgame = countMaterialWithoutKings(b) <= 2600
 
     for r = 1, 8 do
         for c = 1, 8 do
             local piece = b[r][c]
-            local value = pieceValue[piece] or 0
-            if whitePieces[piece] then
-                score += value
-            elseif blackPieces[piece] then
-                score -= value
+            local side = getPieceSide(piece)
+
+            if side then
+                local sign = side == "w" and 1 or -1
+                local value = pieceValue[piece] or 0
+                local bonus = 0
+
+                score += sign * value
+
+                if piece == "♙" or piece == "♟" then
+                    local progress = side == "w" and (7 - r) or (r - 2)
+                    bonus += progress * 12
+
+                    -- 中央兵比較重要
+                    if c == 4 or c == 5 then
+                        bonus += 12
+                    elseif c == 3 or c == 6 then
+                        bonus += 6
+                    end
+
+                    -- 通路兵很有價值
+                    if isPassedPawn(b, r, c, side) then
+                        bonus += 35 + progress * 12
+                    end
+
+                    -- 快升變的兵更重要
+                    if (side == "w" and r <= 3) or (side == "b" and r >= 6) then
+                        bonus += 25
+                    end
+
+                elseif piece == "♘" or piece == "♞" then
+                    bonus += centerBonus(r, c, 8)
+                    -- 馬在邊線比較差
+                    if r == 1 or r == 8 or c == 1 or c == 8 then
+                        bonus -= 25
+                    end
+
+                elseif piece == "♗" or piece == "♝" then
+                    bishopCount[side] += 1
+                    bonus += centerBonus(r, c, 4)
+
+                elseif piece == "♖" or piece == "♜" then
+                    -- 車在開放線比較強
+                    if not hasPawnOnFile(b, side, c) then
+                        bonus += 18
+                    end
+                    -- 車到第七排/第二排壓力大
+                    if side == "w" and r == 2 then
+                        bonus += 20
+                    elseif side == "b" and r == 7 then
+                        bonus += 20
+                    end
+
+                elseif piece == "♕" or piece == "♛" then
+                    bonus += centerBonus(r, c, 2)
+
+                elseif piece == "♔" or piece == "♚" then
+                    if endgame then
+                        -- 殘局王要靠中間
+                        bonus += centerBonus(r, c, 7)
+                    else
+                        -- 開局/中局王在後排、易位後比較安全
+                        if side == "w" then
+                            if r == 8 and (c == 7 or c == 3) then bonus += 35 end
+                            if r <= 6 then bonus -= 35 end
+                        else
+                            if r == 1 and (c == 7 or c == 3) then bonus += 35 end
+                            if r >= 3 then bonus -= 35 end
+                        end
+                    end
+                end
+
+                score += sign * bonus
             end
         end
+    end
+
+    -- 雙象優勢
+    if bishopCount.w >= 2 then score += 35 end
+    if bishopCount.b >= 2 then score -= 35 end
+
+    return score
+end
+
+local function moveOrderScore(b, state, move, side)
+    local movingPiece = b[move.fr][move.fc]
+    local movingValue = pieceValue[movingPiece] or 0
+    local score = 0
+
+    if move.capture and move.capture ~= "" then
+        local capturedValue = pieceValue[move.capture] or 0
+        -- MVV-LVA：優先用小子吃大子
+        score += capturedValue * 10 - movingValue
+    end
+
+    if move.promotion then
+        score += 9000
+    end
+
+    if move.enPassant then
+        score += 1200
+    end
+
+    if move.castle then
+        score += 80
+    end
+
+    -- 會將軍的步優先搜尋，剪枝會更有效
+    local newBoard, _ = applyMove(b, state, move)
+    if inCheck(newBoard, otherSide(side)) then
+        score += 500
     end
 
     return score
 end
 
-local function minimax(b, state, depth, alpha, beta, side)
-    local moves = generateLegalMoves(b, side, state)
+local function orderMoves(b, state, moves, side)
+    table.sort(moves, function(a, bMove)
+        return moveOrderScore(b, state, a, side) > moveOrderScore(b, state, bMove, side)
+    end)
+end
 
-    if depth <= 0 then
-        return evaluateBoard(b)
+local QUIESCENCE_DEPTH = 2
+
+local function quiescence(b, state, alpha, beta, side, qDepth)
+    local standPat = evaluateBoard(b)
+
+    if qDepth <= 0 then
+        return standPat
     end
+
+    local moves = generateLegalMoves(b, side, state)
+    local tacticalMoves = {}
+
+    for _, move in ipairs(moves) do
+        if (move.capture and move.capture ~= "") or move.promotion or move.enPassant then
+            table.insert(tacticalMoves, move)
+        end
+    end
+
+    if #tacticalMoves == 0 then
+        return standPat
+    end
+
+    orderMoves(b, state, tacticalMoves, side)
+
+    if side == "w" then
+        if standPat > alpha then
+            alpha = standPat
+        end
+        if alpha >= beta then
+            return beta
+        end
+
+        for _, move in ipairs(tacticalMoves) do
+            local newBoard, newState = applyMove(b, state, move)
+            local score = quiescence(newBoard, newState, alpha, beta, "b", qDepth - 1)
+            if score > alpha then
+                alpha = score
+            end
+            if alpha >= beta then
+                break
+            end
+        end
+
+        return alpha
+    else
+        if standPat < beta then
+            beta = standPat
+        end
+        if beta <= alpha then
+            return alpha
+        end
+
+        for _, move in ipairs(tacticalMoves) do
+            local newBoard, newState = applyMove(b, state, move)
+            local score = quiescence(newBoard, newState, alpha, beta, "w", qDepth - 1)
+            if score < beta then
+                beta = score
+            end
+            if beta <= alpha then
+                break
+            end
+        end
+
+        return beta
+    end
+end
+
+local function minimax(b, state, depth, alpha, beta, side)
+    if depth <= 0 then
+        return quiescence(b, state, alpha, beta, side, QUIESCENCE_DEPTH)
+    end
+
+    local moves = generateLegalMoves(b, side, state)
 
     if #moves == 0 then
         if inCheck(b, side) then
@@ -720,6 +1023,8 @@ local function minimax(b, state, depth, alpha, beta, side)
         end
         return 0
     end
+
+    orderMoves(b, state, moves, side)
 
     if side == "w" then
         local best = -math.huge
@@ -750,6 +1055,7 @@ end
 
 local function getBestMove()
     local moves = generateLegalMoves(board, sideToMove, gameState)
+    orderMoves(board, gameState, moves, sideToMove)
     if #moves == 0 then
         return nil, nil
     end
@@ -994,6 +1300,16 @@ end)
 
 resetBtn.MouseButton1Click:Connect(function()
     initBoard()
+end)
+
+depthBtn.MouseButton1Click:Connect(function()
+    searchDepth += 1
+    if searchDepth > 4 then
+        searchDepth = 2
+    end
+
+    depthBtn.Text = "AI 深度：" .. tostring(searchDepth)
+    setStatus("AI 深度改成 " .. tostring(searchDepth) .. "。深度越高越強，但可能會比較慢")
 end)
 
 initBoard()
