@@ -5,7 +5,21 @@
 
 local Players = game:GetService("Players")
 local player = Players.LocalPlayer
+
+-- 很重要：這份一定要放在 LocalScript。
+-- 如果放在 Script，Players.LocalPlayer 會是 nil，UI 就跑不出來。
+if not player then
+    warn("ChessGUI 沒有啟動：請把這份程式放在 StarterPlayer > StarterPlayerScripts > LocalScript")
+    return
+end
+
 local PlayerGui = player:WaitForChild("PlayerGui")
+
+-- 避免重複執行時舊 UI 卡住
+local oldGui = PlayerGui:FindFirstChild("ChessGUI")
+if oldGui then
+    oldGui:Destroy()
+end
 
 local screenGui = Instance.new("ScreenGui")
 screenGui.Name = "ChessGUI"
@@ -253,7 +267,12 @@ local function drawArrow(fromRow, fromCol, toRow, toCol)
     local deltaX = endX - startX
     local deltaY = endY - startY
     local length = math.sqrt(deltaX ^ 2 + deltaY ^ 2)
-    local angle = math.atan2(deltaY, deltaX)
+    local angle
+if math.atan2 then
+    angle = math.atan2(deltaY, deltaX)
+else
+    angle = math.atan(deltaY, deltaX)
+end
 
     local line = Instance.new("Frame", boardFrame)
     line.AnchorPoint = Vector2.new(0.5, 0.5)
