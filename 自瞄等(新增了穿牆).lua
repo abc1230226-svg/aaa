@@ -9,7 +9,6 @@ local Camera = workspace.CurrentCamera
 
 local SHOOT_EVENT_NAME = "ShootEvent"
 local AIM_RANGE = 150
-local FOV_RADIUS = 260
 local FIRE_DELAY = 0.08
 
 local espEnabled = false
@@ -70,7 +69,7 @@ local ESPButton = createButton("ESP：OFF", 50)
 local AimButton = createButton("自動瞄準：OFF", 90)
 local FireButton = createButton("按住左鍵自動攻擊：OFF", 130)
 local RefreshButton = createButton("刷新玩家清單", 170)
-local NoClipButton = createButton("NoClip：OFF", 210) -- 新增穿牆按鈕
+local NoClipButton = createButton("NoClip：OFF", 210) -- 穿牆按鈕
 
 local ListTitle = Instance.new("TextLabel")
 ListTitle.Size = UDim2.new(1, -20, 0, 28)
@@ -190,35 +189,39 @@ local function getEnemies()
     return enemies
 end
 
-local function getBestTarget()
-    local bestTarget = nil
-    local bestDistance = math.huge
-    local viewportSize = Camera.ViewportSize
-    local center = Vector2.new(viewportSize.X / 2, viewportSize.Y / 2)
-    for _, player in ipairs(getEnemies()) do
-        local part = getTargetPart(player)
-        if part then
-            local screenPos, onScreen = Camera:WorldToViewportPoint(part.Position)
-            if onScreen then
-                local distanceFromCenter = (Vector2.new(screenPos.X, screenPos.Y) - center).Magnitude
-                if distanceFromCenter <= FOV_RADIUS and distanceFromCenter < bestDistance then
-                    bestDistance = distanceFromCenter
-                    bestTarget = player
+--// 改為鎖定最近的敵人
+local function getClosestEnemy()
+    local closestPlayer = nil
+    local closestDistance = math.huge
+    local myHRP = getMyHRP()
+    if not myHRP then return nil end
+
+    for _, player in ipairs(Players:GetPlayers()) do
+        if isEnemy(player) then
+            local hrp = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
+            if hrp then
+                local distance = (hrp.Position - myHRP.Position).Magnitude
+                if distance < closestDistance then
+                    closestDistance = distance
+                    closestPlayer = player
                 end
             end
         end
     end
-    return bestTarget
+    return closestPlayer
 end
 
---// 自動瞄準
+local function getTarget()
+    -- 你可以切換這裡來找不同的目標
+    return getClosestEnemy()
+end
+
 local function aimAtTarget(player)
     local part = getTargetPart(player)
     if not part then return end
     Camera.CFrame = CFrame.new(Camera.CFrame.Position, part.Position)
 end
 
---// 攻擊
 local function shootTarget(player)
     if not player then return end
     local shootEvent = ReplicatedStorage:FindFirstChild(SHOOT_EVENT_NAME)
@@ -236,7 +239,7 @@ local function startAutoFire()
     autoFiring = true
     task.spawn(function()
         while autoFiring and mouseHolding and holdFireEnabled do
-            local target = getBestTarget()
+            local target = getTarget()
             if target then
                 if autoAimEnabled then
                     aimAtTarget(target)
@@ -290,7 +293,6 @@ local function updateESP()
     end
 end
 
---// 排除清單
 local function refreshPlayerList()
     for _, child in ipairs(PlayerList:GetChildren()) do
         if child:IsA("TextButton") then
@@ -419,7 +421,7 @@ end)
 local espTimer = 0
 RunService.RenderStepped:Connect(function(dt)
     if autoAimEnabled then
-        local target = getBestTarget()
+        local target = getTarget()
         if target then
             aimAtTarget(target)
         end
