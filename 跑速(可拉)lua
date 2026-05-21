@@ -1,184 +1,121 @@
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
-
 local LocalPlayer = Players.LocalPlayer
 
 local ScreenGui = Instance.new("ScreenGui")
 ScreenGui.Name = "SpeedJumpUI"
+ScreenGui.Parent = game:GetService("CoreGui")
 ScreenGui.ResetOnSpawn = false
 
--- 如果是在 Roblox Studio 自己遊戲內，建議用 PlayerGui
-ScreenGui.Parent = LocalPlayer:WaitForChild("PlayerGui")
-
--- 如果你原本環境一定要 CoreGui，就把上面那行換成：
--- ScreenGui.Parent = game:GetService("CoreGui")
-
-
--- 主 Menu
-local menu = Instance.new("Frame")
-menu.Parent = ScreenGui
-menu.Size = UDim2.new(0, 230, 0, 160)
-menu.Position = UDim2.new(0, 100, 0, 100)
-menu.BackgroundColor3 = Color3.fromRGB(35, 35, 35)
-menu.BorderSizePixel = 0
-menu.Active = true
-
--- 圓角
-local menuCorner = Instance.new("UICorner")
-menuCorner.CornerRadius = UDim.new(0, 8)
-menuCorner.Parent = menu
-
--- 標題列，可拖拉
-local titleBar = Instance.new("TextLabel")
-titleBar.Parent = menu
-titleBar.Size = UDim2.new(1, 0, 0, 35)
-titleBar.Position = UDim2.new(0, 0, 0, 0)
-titleBar.Text = "Speed / Jump Menu"
-titleBar.TextColor3 = Color3.new(1, 1, 1)
-titleBar.BackgroundColor3 = Color3.fromRGB(25, 25, 25)
-titleBar.BorderSizePixel = 0
-titleBar.Font = Enum.Font.SourceSansBold
-titleBar.TextSize = 18
-titleBar.Active = true
-
-local titleCorner = Instance.new("UICorner")
-titleCorner.CornerRadius = UDim.new(0, 8)
-titleCorner.Parent = titleBar
-
-
--- 拖拉功能
-local dragging = false
-local dragStart
-local startPos
-
-titleBar.InputBegan:Connect(function(input)
-	if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-		dragging = true
-		dragStart = input.Position
-		startPos = menu.Position
-
-		input.Changed:Connect(function()
-			if input.UserInputState == Enum.UserInputState.End then
-				dragging = false
-			end
-		end)
-	end
-end)
-
-UserInputService.InputChanged:Connect(function(input)
-	if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
-		local delta = input.Position - dragStart
-		menu.Position = UDim2.new(
-			startPos.X.Scale,
-			startPos.X.Offset + delta.X,
-			startPos.Y.Scale,
-			startPos.Y.Offset + delta.Y
-		)
-	end
-end)
-
-
--- 跑速文字
-local speedLabel = Instance.new("TextLabel")
-speedLabel.Parent = menu
+-- 跑速UI
+local speedLabel = Instance.new("TextLabel", ScreenGui)
 speedLabel.Size = UDim2.new(0, 200, 0, 30)
-speedLabel.Position = UDim2.new(0, 15, 0, 45)
+speedLabel.Position = UDim2.new(0, 10, 0, 10)
 speedLabel.Text = "跑速: 16"
-speedLabel.TextColor3 = Color3.new(1, 1, 1)
-speedLabel.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
-speedLabel.BorderSizePixel = 0
-speedLabel.Font = Enum.Font.SourceSans
-speedLabel.TextSize = 16
+speedLabel.TextColor3 = Color3.new(1,1,1)
+speedLabel.BackgroundColor3 = Color3.new(0.2,0.2,0.2)
+speedLabel.BorderSizePixel = 1
+speedLabel.Active = true
 
-local speedLabelCorner = Instance.new("UICorner")
-speedLabelCorner.CornerRadius = UDim.new(0, 6)
-speedLabelCorner.Parent = speedLabel
-
-
--- 跑速輸入框
-local speedSlider = Instance.new("TextBox")
-speedSlider.Parent = menu
+local speedSlider = Instance.new("TextBox", ScreenGui)
 speedSlider.Size = UDim2.new(0, 200, 0, 30)
-speedSlider.Position = UDim2.new(0, 15, 0, 80)
+speedSlider.Position = UDim2.new(0, 10, 0, 50)
 speedSlider.Text = "16"
-speedSlider.PlaceholderText = "輸入跑速"
-speedSlider.TextColor3 = Color3.new(1, 1, 1)
-speedSlider.BackgroundColor3 = Color3.fromRGB(60, 60, 60)
-speedSlider.BorderSizePixel = 0
-speedSlider.Font = Enum.Font.SourceSans
-speedSlider.TextSize = 16
-speedSlider.ClearTextOnFocus = false
-
-local speedBoxCorner = Instance.new("UICorner")
-speedBoxCorner.CornerRadius = UDim.new(0, 6)
-speedBoxCorner.Parent = speedSlider
-
+speedSlider.TextColor3 = Color3.new(1,1,1)
+speedSlider.BackgroundColor3 = Color3.new(0.3,0.3,0.3)
+speedSlider.BorderSizePixel = 1
 
 local minSpeed = 16
 local maxSpeed = 999
 local currentSpeed = 16
 
 speedSlider.FocusLost:Connect(function()
-	local val = tonumber(speedSlider.Text)
-
-	if val and val >= minSpeed and val <= maxSpeed then
-		currentSpeed = val
-		speedLabel.Text = "跑速: " .. val
-	else
-		speedSlider.Text = tostring(currentSpeed)
-	end
+    local val = tonumber(speedSlider.Text)
+    if val and val >= minSpeed and val <= maxSpeed then
+        currentSpeed = val
+        speedLabel.Text = "跑速: " .. val
+    else
+        speedSlider.Text = tostring(currentSpeed)
+    end
 end)
-
 
 -- 無限跳躍按鈕
-local jumpButton = Instance.new("TextButton")
-jumpButton.Parent = menu
+local jumpButton = Instance.new("TextButton", ScreenGui)
 jumpButton.Size = UDim2.new(0, 200, 0, 30)
-jumpButton.Position = UDim2.new(0, 15, 0, 115)
+jumpButton.Position = UDim2.new(0, 10, 0, 90)
 jumpButton.Text = "無限跳躍 OFF"
-jumpButton.TextColor3 = Color3.new(1, 1, 1)
-jumpButton.BackgroundColor3 = Color3.fromRGB(80, 80, 80)
-jumpButton.BorderSizePixel = 0
-jumpButton.Font = Enum.Font.SourceSansBold
-jumpButton.TextSize = 16
+jumpButton.TextColor3 = Color3.new(1,1,1)
+jumpButton.BackgroundColor3 = Color3.new(0.2,0.2,0.2)
+jumpButton.BorderSizePixel = 1
 
-local jumpButtonCorner = Instance.new("UICorner")
-jumpButtonCorner.CornerRadius = UDim.new(0, 6)
-jumpButtonCorner.Parent = jumpButton
+-- 可拖動清單
+local dragging = false
+local dragStart
+local startSpeedLabelPos
+local startSpeedSliderPos
+local startJumpButtonPos
 
+speedLabel.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+        dragging = true
+        dragStart = input.Position
 
-local infiniteJump = false
+        startSpeedLabelPos = speedLabel.Position
+        startSpeedSliderPos = speedSlider.Position
+        startJumpButtonPos = jumpButton.Position
 
-jumpButton.MouseButton1Click:Connect(function()
-	infiniteJump = not infiniteJump
-	jumpButton.Text = "無限跳躍 " .. (infiniteJump and "ON" or "OFF")
-
-	if infiniteJump then
-		jumpButton.BackgroundColor3 = Color3.fromRGB(40, 120, 40)
-	else
-		jumpButton.BackgroundColor3 = Color3.fromRGB(80, 80, 80)
-	end
+        input.Changed:Connect(function()
+            if input.UserInputState == Enum.UserInputState.End then
+                dragging = false
+            end
+        end)
+    end
 end)
 
+UserInputService.InputChanged:Connect(function(input)
+    if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+        local delta = input.Position - dragStart
+
+        speedLabel.Position = UDim2.new(
+            startSpeedLabelPos.X.Scale,
+            startSpeedLabelPos.X.Offset + delta.X,
+            startSpeedLabelPos.Y.Scale,
+            startSpeedLabelPos.Y.Offset + delta.Y
+        )
+
+        speedSlider.Position = UDim2.new(
+            startSpeedSliderPos.X.Scale,
+            startSpeedSliderPos.X.Offset + delta.X,
+            startSpeedSliderPos.Y.Scale,
+            startSpeedSliderPos.Y.Offset + delta.Y
+        )
+
+        jumpButton.Position = UDim2.new(
+            startJumpButtonPos.X.Scale,
+            startJumpButtonPos.X.Offset + delta.X,
+            startJumpButtonPos.Y.Scale,
+            startJumpButtonPos.Y.Offset + delta.Y
+        )
+    end
+end)
+
+local infiniteJump = false
+jumpButton.MouseButton1Click:Connect(function()
+    infiniteJump = not infiniteJump
+    jumpButton.Text = "無限跳躍 " .. (infiniteJump and "ON" or "OFF")
+end)
 
 -- 設定角色跑速
 RunService.RenderStepped:Connect(function()
-	local character = LocalPlayer.Character
-	local humanoid = character and character:FindFirstChildOfClass("Humanoid")
-
-	if humanoid then
-		humanoid.WalkSpeed = currentSpeed
-	end
+    if LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("Humanoid") then
+        LocalPlayer.Character.Humanoid.WalkSpeed = currentSpeed
+    end
 end)
 
-
--- 無限跳躍
+-- 無限跳躍實現
 UserInputService.JumpRequest:Connect(function()
-	local character = LocalPlayer.Character
-	local humanoid = character and character:FindFirstChildOfClass("Humanoid")
-
-	if infiniteJump and humanoid then
-		humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
-	end
+    if infiniteJump and LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("Humanoid") then
+        LocalPlayer.Character.Humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
+    end
 end)
