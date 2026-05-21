@@ -91,8 +91,8 @@ PlayerList.Position = UDim2.new(0, 10, 0, 275)
 PlayerList.BackgroundColor3 = Color3.fromRGB(32, 32, 32)
 PlayerList.BorderSizePixel = 0
 PlayerList.ScrollBarThickness = 6
-PlayerList.CanvasSize = UDim2.new(0, 0, 0, 0)
-PlayerList.AutomaticCanvasSize = Enum.AutomaticSize.Y
+PlayerList.CanvasSize = UDim2.new(0, 0, 0, 0) -- 會動態調整
+PlayerList.AutomaticCanvasSize = Enum.AutomaticSize.Y -- 自動調整Y
 PlayerList.Parent = MainFrame
 
 local ListLayout = Instance.new("UIListLayout")
@@ -325,11 +325,14 @@ local function updateESP()
 end
 
 local function refreshPlayerList()
+    -- 先清空舊的
     for _, child in ipairs(PlayerList:GetChildren()) do
         if child:IsA("TextButton") then
             child:Destroy()
         end
     end
+    -- 新增玩家按鈕，並計算總高度
+    local totalHeight = 0
     for _, player in ipairs(Players:GetPlayers()) do
         if player ~= LocalPlayer then
             local btn = Instance.new("TextButton")
@@ -343,13 +346,17 @@ local function refreshPlayerList()
                 btn.Text = "✅ 可瞄準：" .. player.Name
             end
             btn.Parent = PlayerList
+            -- 按鈕點擊切換
             btn.MouseButton1Click:Connect(function()
                 excludedPlayers[player.UserId] = not excludedPlayers[player.UserId]
                 refreshPlayerList()
                 updateESP()
             end)
+            totalHeight = totalHeight + 32 + 5 -- 高度+間距
         end
     end
+    -- 自動調整CanvasSize
+    PlayerList.CanvasSize = UDim2.new(0, 0, 0, totalHeight)
 end
 
 --// UI事件
