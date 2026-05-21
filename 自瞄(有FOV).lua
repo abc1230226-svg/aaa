@@ -1,37 +1,49 @@
 local Players = game:GetService("Players")
 local UserInputService = game:GetService("UserInputService")
 local RunService = game:GetService("RunService")
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local CoreGui = game:GetService("CoreGui") -- UI放在CoreGui
+local CoreGui = game:GetService("CoreGui") -- 改用CoreGui
 
 local LocalPlayer = Players.LocalPlayer
 local Camera = workspace.CurrentCamera
 
-local SHOOT_EVENT_NAME = "ShootEvent"
-local AIM_RANGE = 150
-local FIRE_DELAY = 0.08
+--// 如果只想給自己或管理員用，把你的 UserId 放進來
+--// 例如：local ALLOWED_USER_IDS = { [123456789] = true }
+--// 留空代表所有玩家都可以看到
+local ALLOWED_USER_IDS = {}
 
-local espEnabled = false
-local autoAimEnabled = false
-local holdFireEnabled = false
-local mouseHolding = false
-local autoFiring = false
+if next(ALLOWED_USER_IDS) ~= nil and not ALLOWED_USER_IDS[LocalPlayer.UserId] then
+    return
+end
+
+--// 設定
+local MAX_RANGE = 150
+local FOV_MIN = 10
+local FOV_MAX = 120
+local FOVAngle = 70
+
+--// 狀態
+local lockEnabled = false
+local useFOVMode = true
+local playerListVisible = true
+local showFOVCircle = true
 
 local excludedPlayers = {}
-local espObjects = {}
+local currentLockedTarget = nil
 
--- 狀態控制
-local useFOVPriority = true -- 是否使用FOV優先
-local FOVSize = 70 -- 初始FOV大小（角度）
+--// 避免重複產生 UI
+local oldGui = CoreGui:FindFirstChild("AimLockUI")
+if oldGui then
+    oldGui:Destroy()
+end
 
---// 建立 UI（放在 CoreGui）
+--// UI
 local ScreenGui = Instance.new("ScreenGui")
-ScreenGui.Name = "AimAssistUI"
+ScreenGui.Name = "AimLockUI"
 ScreenGui.ResetOnSpawn = false
 ScreenGui.Parent = CoreGui
 
 local MainFrame = Instance.new("Frame")
-MainFrame.Size = UDim2.new(0, 310, 0, 420)
+MainFrame.Size = UDim2.new(0, 330, 0, 570)
 MainFrame.Position = UDim2.new(0, 30, 0, 100)
 MainFrame.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
 MainFrame.BackgroundTransparency = 0.08
@@ -39,14 +51,22 @@ MainFrame.BorderSizePixel = 0
 MainFrame.Active = true
 MainFrame.Parent = ScreenGui
 
+local MainCorner = Instance.new("UICorner")
+MainCorner.CornerRadius = UDim.new(0, 10)
+MainCorner.Parent = MainFrame
+
 local TitleBar = Instance.new("TextButton")
-TitleBar.Size = UDim2.new(1, 0, 0, 36)
+TitleBar.Size = UDim2.new(1, 0, 0, 38)
 TitleBar.Position = UDim2.new(0, 0, 0, 0)
 TitleBar.BackgroundColor3 = Color3.fromRGB(45, 45, 45)
 TitleBar.TextColor3 = Color3.fromRGB(255, 255, 255)
 TitleBar.TextSize = 14
-TitleBar.Text = "Aim Assist 控制台｜拖曳這裡移動"
+TitleBar.Text = "Aim Lock 控制台｜拖曳這裡移動"
 TitleBar.Parent = MainFrame
+
+local TitleCorner = Instance.new("UICorner")
+TitleCorner.CornerRadius = UDim.new(0, 10)
+TitleCorner.Parent = TitleBar
 
 local ToggleUIBtn = Instance.new("TextButton")
 ToggleUIBtn.Size = UDim2.new(0, 120, 0, 32)
@@ -57,6 +77,10 @@ ToggleUIBtn.TextSize = 14
 ToggleUIBtn.Text = "隱藏控制台"
 ToggleUIBtn.Parent = ScreenGui
 
+local ToggleCorner = Instance.new("UICorner")
+ToggleCorner.CornerRadius = UDim.new(0, 8)
+ToggleCorner.Parent = ToggleUIBtn
+
 local function createButton(text, y)
     local btn = Instance.new("TextButton")
     btn.Size = UDim2.new(1, -20, 0, 34)
@@ -66,51 +90,139 @@ local function createButton(text, y)
     btn.TextSize = 14
     btn.Text = text
     btn.Parent = MainFrame
+
+    local corner = Instance.new("UICorner")
+    corner.CornerRadius = UDim.new(0, 8)
+    corner.Parent = btn
+
     return btn
 end
 
-local ESPButton = createButton("ESP：OFF", 50)
-local AimButton = createButton("自動瞄準：OFF", 90)
-local FireButton = createButton("按住左鍵自動攻擊：OFF", 130)
-local RefreshButton = createButton("刷新玩家清單", 170)
-local NoClipButton = createButton("NoClip：OFF", 210) -- 穿牆按鈕
+local LockButton = createButton("鎖定：OFF", 50)
+local ModeButton = createButton("模式：FOV 優先", 90)
+local ListToggleButton = createButton("玩家清單：開啟", 130)
+local FOVCircleButton = createButton("FOV 圈圈：顯示", 170)
+local RefreshButton = createButton("刷新玩家清單", 210)
+
+local TargetLabel = Instance.new("TextLabel")
+TargetLabel.Size = UDim2.new(1, -20, 0, 26)
+TargetLabel.Position = UDim2.new(0, 10, 0, 250)
+TargetLabel.BackgroundTransparency = 1
+TargetLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+TargetLabel.TextSize = 14
+TargetLabel.TextXAlignment = Enum.TextXAlignment.Left
+TargetLabel.Text = "目前鎖定：無"
+TargetLabel.Parent = MainFrame
+
+--// FOV Label
+local FOVLabel = Instance.new("TextLabel")
+FOVLabel.Size = UDim2.new(1, -20, 0, 24)
+FOVLabel.Position = UDim2.new(0, 10, 0, 280)
+FOVLabel.BackgroundTransparency = 1
+FOVLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+FOVLabel.TextSize = 14
+FOVLabel.TextXAlignment = Enum.TextXAlignment.Left
+FOVLabel.Text = "FOV 大小：" .. FOVAngle
+FOVLabel.Parent = MainFrame
+
+--// 自製 FOV Slider
+local SliderFrame = Instance.new("Frame")
+SliderFrame.Size = UDim2.new(1, -20, 0, 34)
+SliderFrame.Position = UDim2.new(0, 10, 0, 310)
+SliderFrame.BackgroundTransparency = 1
+SliderFrame.Parent = MainFrame
+
+local SliderTrack = Instance.new("Frame")
+SliderTrack.Size = UDim2.new(1, 0, 0, 8)
+SliderTrack.Position = UDim2.new(0, 0, 0, 13)
+SliderTrack.BackgroundColor3 = Color3.fromRGB(65, 65, 65)
+SliderTrack.BorderSizePixel = 0
+SliderTrack.Parent = SliderFrame
+
+local TrackCorner = Instance.new("UICorner")
+TrackCorner.CornerRadius = UDim.new(1, 0)
+TrackCorner.Parent = SliderTrack
+
+local SliderFill = Instance.new("Frame")
+SliderFill.Size = UDim2.new(0, 0, 1, 0)
+SliderFill.BackgroundColor3 = Color3.fromRGB(120, 120, 120)
+SliderFill.BorderSizePixel = 0
+SliderFill.Parent = SliderTrack
+
+local FillCorner = Instance.new("UICorner")
+FillCorner.CornerRadius = UDim.new(1, 0)
+FillCorner.Parent = SliderFill
+
+local SliderKnob = Instance.new("TextButton")
+SliderKnob.Size = UDim2.new(0, 22, 0, 22)
+SliderKnob.Position = UDim2.new(0, -11, 0, 6)
+SliderKnob.BackgroundColor3 = Color3.fromRGB(230, 230, 230)
+SliderKnob.Text = ""
+SliderKnob.Parent = SliderFrame
+
+local KnobCorner = Instance.new("UICorner")
+KnobCorner.CornerRadius = UDim.new(1, 0)
+KnobCorner.Parent = SliderKnob
 
 local ListTitle = Instance.new("TextLabel")
-ListTitle.Size = UDim2.new(1, -20, 0, 28)
-ListTitle.Position = UDim2.new(0, 10, 0, 245)
+ListTitle.Size = UDim2.new(1, -20, 0, 26)
+ListTitle.Position = UDim2.new(0, 10, 0, 355)
 ListTitle.BackgroundTransparency = 1
 ListTitle.TextColor3 = Color3.fromRGB(255, 255, 255)
 ListTitle.TextSize = 14
 ListTitle.TextXAlignment = Enum.TextXAlignment.Left
-ListTitle.Text = "選擇不要瞄準的玩家："
+ListTitle.Text = "選擇不要鎖定的玩家："
 ListTitle.Parent = MainFrame
 
 local PlayerList = Instance.new("ScrollingFrame")
-PlayerList.Size = UDim2.new(1, -20, 0, 160)
-PlayerList.Position = UDim2.new(0, 10, 0, 275)
+PlayerList.Size = UDim2.new(1, -20, 0, 175)
+PlayerList.Position = UDim2.new(0, 10, 0, 385)
 PlayerList.BackgroundColor3 = Color3.fromRGB(32, 32, 32)
 PlayerList.BorderSizePixel = 0
 PlayerList.ScrollBarThickness = 6
-PlayerList.CanvasSize = UDim2.new(0, 0, 0, 0) -- 會動態調整
-PlayerList.AutomaticCanvasSize = Enum.AutomaticSize.Y -- 自動調整Y
+PlayerList.CanvasSize = UDim2.new(0, 0, 0, 0)
+PlayerList.AutomaticCanvasSize = Enum.AutomaticSize.Y
 PlayerList.Parent = MainFrame
+
+local ListCorner = Instance.new("UICorner")
+ListCorner.CornerRadius = UDim.new(0, 8)
+ListCorner.Parent = PlayerList
 
 local ListLayout = Instance.new("UIListLayout")
 ListLayout.Padding = UDim.new(0, 5)
 ListLayout.SortOrder = Enum.SortOrder.LayoutOrder
 ListLayout.Parent = PlayerList
 
---// 拖曳功能
+--// FOV 圈圈
+local FOVCircle = Instance.new("Frame")
+FOVCircle.BackgroundTransparency = 1
+FOVCircle.BorderSizePixel = 0
+FOVCircle.Visible = true
+FOVCircle.Parent = CoreGui -- 改放在CoreGui
+
+local CircleCorner = Instance.new("UICorner")
+CircleCorner.CornerRadius = UDim.new(1, 0)
+CircleCorner.Parent = FOVCircle
+
+local CircleStroke = Instance.new("UIStroke")
+CircleStroke.Thickness = 2
+CircleStroke.Color = Color3.fromRGB(255, 255, 255)
+CircleStroke.Transparency = 0.25
+CircleStroke.Parent = FOVCircle
+
+--// 拖曳 UI
 local dragging = false
 local dragStart
 local startPos
 
 TitleBar.InputBegan:Connect(function(input)
-    if input.UserInputType == Enum.UserInputType.MouseButton1 
+    if input.UserInputType == Enum.UserInputType.MouseButton1
         or input.UserInputType == Enum.UserInputType.Touch then
+
         dragging = true
         dragStart = input.Position
         startPos = MainFrame.Position
+
         input.Changed:Connect(function()
             if input.UserInputState == Enum.UserInputState.End then
                 dragging = false
@@ -121,10 +233,11 @@ end)
 
 UserInputService.InputChanged:Connect(function(input)
     if dragging and (
-        input.UserInputType == Enum.UserInputType.MouseMovement 
+        input.UserInputType == Enum.UserInputType.MouseMovement
         or input.UserInputType == Enum.UserInputType.Touch
     ) then
         local delta = input.Position - dragStart
+
         MainFrame.Position = UDim2.new(
             startPos.X.Scale,
             startPos.X.Offset + delta.X,
@@ -134,16 +247,64 @@ UserInputService.InputChanged:Connect(function(input)
     end
 end)
 
-ToggleUIBtn.MouseButton1Click:Connect(function()
-    MainFrame.Visible = not MainFrame.Visible
-    if MainFrame.Visible then
-        ToggleUIBtn.Text = "隱藏控制台"
-    else
-        ToggleUIBtn.Text = "顯示控制台"
+--// Slider 功能
+local sliderDragging = false
+
+local function setFOVFromAlpha(alpha)
+    alpha = math.clamp(alpha, 0, 1)
+
+    FOVAngle = math.floor(FOV_MIN + (FOV_MAX - FOV_MIN) * alpha + 0.5)
+    FOVLabel.Text = "FOV 大小：" .. FOVAngle
+
+    SliderFill.Size = UDim2.new(alpha, 0, 1, 0)
+    SliderKnob.Position = UDim2.new(alpha, -11, 0, 6)
+end
+
+local function updateSliderFromX(x)
+    local trackX = SliderTrack.AbsolutePosition.X
+    local trackWidth = SliderTrack.AbsoluteSize.X
+    local alpha = (x - trackX) / trackWidth
+
+    setFOVFromAlpha(alpha)
+end
+
+SliderTrack.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1
+        or input.UserInputType == Enum.UserInputType.Touch then
+
+        sliderDragging = true
+        updateSliderFromX(input.Position.X)
     end
 end)
 
---// 判斷玩家
+SliderKnob.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1
+        or input.UserInputType == Enum.UserInputType.Touch then
+
+        sliderDragging = true
+    end
+end)
+
+UserInputService.InputChanged:Connect(function(input)
+    if sliderDragging and (
+        input.UserInputType == Enum.UserInputType.MouseMovement
+        or input.UserInputType == Enum.UserInputType.Touch
+    ) then
+        updateSliderFromX(input.Position.X)
+    end
+end)
+
+UserInputService.InputEnded:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1
+        or input.UserInputType == Enum.UserInputType.Touch then
+
+        sliderDragging = false
+    end
+end)
+
+setFOVFromAlpha((FOVAngle - FOV_MIN) / (FOV_MAX - FOV_MIN))
+
+--// 玩家判斷
 local function isExcluded(player)
     return excludedPlayers[player.UserId] == true
 end
@@ -151,359 +312,311 @@ end
 local function getMyHRP()
     local char = LocalPlayer.Character
     if not char then return nil end
+
     return char:FindFirstChild("HumanoidRootPart")
 end
 
 local function isAlive(player)
     local char = player.Character
     if not char then return false end
+
     local humanoid = char:FindFirstChildOfClass("Humanoid")
     local hrp = char:FindFirstChild("HumanoidRootPart")
-    if not humanoid or not hrp then return false end
-    return humanoid.Health > 0
-end
 
-local function isEnemy(player)
-    if not player then return false end
-    if player == LocalPlayer then return false end
-    if isExcluded(player) then return false end
-    if not isAlive(player) then return false end
-    if player.Team and LocalPlayer.Team and player.Team == LocalPlayer.Team then return false end
-    local myHRP = getMyHRP()
-    local enemyHRP = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
-    if not myHRP or not enemyHRP then return false end
-    local distance = (enemyHRP.Position - myHRP.Position).Magnitude
-    if distance > AIM_RANGE then return false end
-    return true
+    if not humanoid or not hrp then
+        return false
+    end
+
+    return humanoid.Health > 0
 end
 
 local function getTargetPart(player)
     local char = player.Character
     if not char then return nil end
+
     return char:FindFirstChild("Head") or char:FindFirstChild("HumanoidRootPart")
 end
 
-local function getEnemies()
-    local enemies = {}
-    for _, player in ipairs(Players:GetPlayers()) do
-        if isEnemy(player) then
-            table.insert(enemies, player)
-        end
+local function isValidTarget(player)
+    if not player then return false end
+    if player == LocalPlayer then return false end
+    if isExcluded(player) then return false end
+    if not isAlive(player) then return false end
+
+    if player.Team and LocalPlayer.Team and player.Team == LocalPlayer.Team then
+        return false
     end
-    return enemies
+
+    local myHRP = getMyHRP()
+    local targetPart = getTargetPart(player)
+
+    if not myHRP or not targetPart then
+        return false
+    end
+
+    local distance = (targetPart.Position - myHRP.Position).Magnitude
+
+    if distance > MAX_RANGE then
+        return false
+    end
+
+    return true
 end
 
---// 改成範圍內角度最小的目標（FOV優先）
-local function getBestTarget()
+local function getAngleToPlayer(player)
+    Camera = workspace.CurrentCamera
+
+    local part = getTargetPart(player)
+    if not part then
+        return math.huge
+    end
+
+    local camPos = Camera.CFrame.Position
+    local directionVector = part.Position - camPos
+
+    if directionVector.Magnitude <= 0.01 then
+        return math.huge
+    end
+
+    local direction = directionVector.Unit
+    local lookVector = Camera.CFrame.LookVector
+    local dot = math.clamp(lookVector:Dot(direction), -1, 1)
+
+    return math.deg(math.acos(dot))
+end
+
+local function getDistanceToPlayer(player)
     local myHRP = getMyHRP()
-    if not myHRP then return nil end
+    local part = getTargetPart(player)
+
+    if not myHRP or not part then
+        return math.huge
+    end
+
+    return (part.Position - myHRP.Position).Magnitude
+end
+
+local function getTargetByFOV()
     local bestPlayer = nil
-    local bestAngle = math.huge -- 用角度判斷
+    local bestAngle = math.huge
+
     for _, player in ipairs(Players:GetPlayers()) do
-        if isEnemy(player) then
-            local hrp = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
-            if hrp then
-                local direction = (hrp.Position - myHRP.Position).unit
-                local cameraLookVector = Camera.CFrame.LookVector
-                local angle = math.acos(cameraLookVector:Dot(direction))
-                angle = math.deg(angle)
-                if angle <= FOVSize and angle < bestAngle then
-                    bestAngle = angle
-                    bestPlayer = player
-                end
+        if isValidTarget(player) then
+            local angle = getAngleToPlayer(player)
+
+            if angle <= FOVAngle and angle < bestAngle then
+                bestAngle = angle
+                bestPlayer = player
             end
         end
     end
+
     return bestPlayer
 end
 
-local function getClosestEnemy()
-    local closestPlayer = nil
-    local closestDistance = math.huge
-    local myHRP = getMyHRP()
-    if not myHRP then return nil end
+local function getTargetByClosest()
+    local bestPlayer = nil
+    local bestDistance = math.huge
 
     for _, player in ipairs(Players:GetPlayers()) do
-        if isEnemy(player) then
-            local hrp = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
-            if hrp then
-                local distance = (hrp.Position - myHRP.Position).Magnitude
-                if distance < closestDistance then
-                    closestDistance = distance
-                    closestPlayer = player
-                end
+        if isValidTarget(player) then
+            local distance = getDistanceToPlayer(player)
+
+            if distance < bestDistance then
+                bestDistance = distance
+                bestPlayer = player
             end
         end
     end
-    return closestPlayer
+
+    return bestPlayer
 end
 
---// 根據模式選擇目標
-local function getTarget()
-    if useFOVPriority then
-        return getBestTarget()
+local function getBestTarget()
+    if useFOVMode then
+        return getTargetByFOV()
     else
-        return getClosestEnemy()
+        return getTargetByClosest()
     end
 end
 
 local function aimAtTarget(player)
+    Camera = workspace.CurrentCamera
+
     local part = getTargetPart(player)
     if not part then return end
+
     Camera.CFrame = CFrame.new(Camera.CFrame.Position, part.Position)
 end
 
-local function shootTarget(player)
-    if not player then return end
-    local shootEvent = ReplicatedStorage:FindFirstChild(SHOOT_EVENT_NAME)
-    if not shootEvent then
-        warn("找不到 RemoteEvent：" .. SHOOT_EVENT_NAME)
-        return
-    end
-    local part = getTargetPart(player)
-    if not part then return end
-    shootEvent:FireServer(part.Position)
-end
-
-local function startAutoFire()
-    if autoFiring then return end
-    autoFiring = true
-    task.spawn(function()
-        while autoFiring and mouseHolding and holdFireEnabled do
-            local target = getTarget()
-            if target then
-                if autoAimEnabled then
-                    aimAtTarget(target)
-                end
-                shootTarget(target)
-            end
-            task.wait(FIRE_DELAY)
-        end
-        autoFiring = false
-    end)
-end
-
---// ESP
-local function clearESP()
-    for _, obj in pairs(espObjects) do
-        if obj then
-            obj:Destroy()
-        end
-    end
-    espObjects = {}
-end
-
-local function updateESP()
-    if not espEnabled then
-        clearESP()
-        return
-    end
-    for _, player in ipairs(Players:GetPlayers()) do
-        local char = player.Character
-        if isEnemy(player) and char then
-            if not espObjects[player.UserId] then
-                local highlight = Instance.new("Highlight")
-                highlight.Name = "AimAssistESP"
-                highlight.Adornee = char
-                highlight.FillColor = Color3.fromRGB(255, 0, 0)
-                highlight.OutlineColor = Color3.fromRGB(255, 255, 255)
-                highlight.FillTransparency = 0.65
-                highlight.OutlineTransparency = 0
-                highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
-                highlight.Parent = char
-                espObjects[player.UserId] = highlight
-            else
-                espObjects[player.UserId].Adornee = char
-            end
-        else
-            if espObjects[player.UserId] then
-                espObjects[player.UserId]:Destroy()
-                espObjects[player.UserId] = nil
-            end
-        end
+local function updateTargetLabel()
+    if currentLockedTarget and isValidTarget(currentLockedTarget) then
+        TargetLabel.Text = "目前鎖定：" .. currentLockedTarget.Name
+    else
+        TargetLabel.Text = "目前鎖定：無"
     end
 end
 
+--// 玩家清單
 local function refreshPlayerList()
-    -- 先清空舊的
     for _, child in ipairs(PlayerList:GetChildren()) do
         if child:IsA("TextButton") then
             child:Destroy()
         end
     end
-    -- 新增玩家按鈕，並計算總高度
+
     local totalHeight = 0
+
     for _, player in ipairs(Players:GetPlayers()) do
         if player ~= LocalPlayer then
             local btn = Instance.new("TextButton")
             btn.Size = UDim2.new(1, -6, 0, 32)
-            btn.BackgroundColor3 = isExcluded(player) and Color3.fromRGB(140, 45, 45) or Color3.fromRGB(55, 55, 55)
+            btn.BackgroundColor3 = isExcluded(player)
+                and Color3.fromRGB(140, 45, 45)
+                or Color3.fromRGB(55, 55, 55)
+
             btn.TextColor3 = Color3.fromRGB(255, 255, 255)
             btn.TextSize = 13
+
             if isExcluded(player) then
-                btn.Text = "🚫 不瞄準：" .. player.Name
+                btn.Text = "🚫 不鎖定：" .. player.Name
             else
-                btn.Text = "✅ 可瞄準：" .. player.Name
+                btn.Text = "✅ 可鎖定：" .. player.Name
             end
+
             btn.Parent = PlayerList
-            -- 按鈕點擊切換
-            btn.MouseButton1Click:Connect(function()
+
+            local corner = Instance.new("UICorner")
+            corner.CornerRadius = UDim.new(0, 6)
+            corner.Parent = btn
+
+            btn.MouseButton1Click = (function()
                 excludedPlayers[player.UserId] = not excludedPlayers[player.UserId]
+                if currentLockedTarget == player and isExcluded(player) then
+                    currentLockedTarget = nil
+                end
                 refreshPlayerList()
-                updateESP()
+                updateTargetLabel()
             end)
-            totalHeight = totalHeight + 32 + 5 -- 高度+間距
+
+            totalHeight += 37
         end
     end
-    -- 自動調整CanvasSize
+
     PlayerList.CanvasSize = UDim2.new(0, 0, 0, totalHeight)
 end
 
---// UI事件
-ESPButton.MouseButton1Click:Connect(function()
-    espEnabled = not espEnabled
-    ESPButton.Text = "ESP：" .. (espEnabled and "ON" or "OFF")
-    updateESP()
+local function setPlayerListVisible(value)
+    playerListVisible = value
+
+    ListTitle.Visible = playerListVisible
+    PlayerList.Visible = playerListVisible
+
+    if playerListVisible then
+        ListToggleButton.Text = "玩家清單：開啟"
+        MainFrame.Size = UDim2.new(0, 330, 0, 570)
+    else
+        ListToggleButton.Text = "玩家清單：關閉"
+        MainFrame.Size = UDim2.new(0, 330, 0, 355)
+    end
+end
+
+--// UI 事件
+ToggleUIBtn.MouseButton1Click:Connect(function()
+    MainFrame.Visible = not MainFrame.Visible
+
+    if MainFrame.Visible then
+        ToggleUIBtn.Text = "隱藏控制台"
+    else
+        ToggleUIBtn.Text = "顯示控制台"
+    end
 end)
 
-AimButton.MouseButton1Click:Connect(function()
-    autoAimEnabled = not autoAimEnabled
-    AimButton.Text = "自動瞄準：" .. (autoAimEnabled and "ON" or "OFF")
+LockButton.MouseButton1Click:Connect(function()
+    lockEnabled = not lockEnabled
+    if lockEnabled then
+        currentLockedTarget = getBestTarget()
+        LockButton.Text = "鎖定：ON"
+    else
+        currentLockedTarget = nil
+        LockButton.Text = "鎖定：OFF"
+    end
+    updateTargetLabel()
 end)
 
-FireButton.MouseButton1Click:Connect(function()
-    holdFireEnabled = not holdFireEnabled
-    FireButton.Text = "按住左鍵自動攻擊：" .. (holdFireEnabled and "ON" or "OFF")
+ModeButton.MouseButton1Click:Connect(function()
+    useFOVMode = not useFOVMode
+    currentLockedTarget = nil
+    if useFOVMode then
+        ModeButton.Text = "模式：FOV 優先"
+    else
+        ModeButton.Text = "模式：最近玩家"
+    end
+    updateTargetLabel()
+end)
+
+ListToggleButton.MouseButton1Click:Connect(function()
+    setPlayerListVisible(not playerListVisible)
+end)
+
+FOVCircleButton.MouseButton1Click:Connect(function()
+    showFOVCircle = not showFOVCircle
+    if showFOVCircle then
+        FOVCircleButton.Text = "FOV 圈圈：顯示"
+    else
+        FOVCircleButton.Text = "FOV 圈圈：隱藏"
+    end
 end)
 
 RefreshButton.MouseButton1Click:Connect(function()
     refreshPlayerList()
-    updateESP()
 end)
 
---// 穿牆（NoClip）
-local noclipActive = false -- 穿牆狀態
-local originalCollisions = {}
-
-local function applyNoClip()
-    local character = LocalPlayer.Character
-    if not character then return end
-    for _, part in ipairs(character:GetDescendants()) do
-        if part:IsA("BasePart") then
-            if noclipActive then
-                if originalCollisions[part] == nil then
-                    originalCollisions[part] = part.CanCollide
-                end
-                part.CanCollide = false
-            else
-                if originalCollisions[part] ~= nil then
-                    part.CanCollide = originalCollisions[part]
-                    originalCollisions[part] = nil
-                end
-            end
-        end
-    end
-end
-
-local NoClipBtn = createButton("NoClip：OFF", 210)
-
-NoClipBtn.MouseButton1Click:Connect(function()
-    noclipActive = not noclipActive
-    NoClipBtn.Text = "NoClip：" .. (noclipActive and "ON" or "OFF")
-    applyNoClip()
-end)
-
--- 角色重生或加入時重設穿牆狀態
-LocalPlayer.CharacterAdded:Connect(function()
-    task.wait(0.3)
-    originalCollisions = {}
-    if noclipActive then
-        applyNoClip()
-    end
-end)
-
---// 按住左鍵攻擊
-UserInputService.InputBegan:Connect(function(input, gameProcessed)
-    if gameProcessed then return end
-    if input.UserInputType == Enum.UserInputType.MouseButton1 then
-        mouseHolding = true
-        if holdFireEnabled then
-            startAutoFire()
-        end
-    end
-end)
-
-UserInputService.InputEnded:Connect(function(input)
-    if input.UserInputType == Enum.UserInputType.MouseButton1 then
-        mouseHolding = false
-    end
-end)
-
---// 玩家加入/離開
 Players.PlayerAdded:Connect(function()
     task.wait(0.3)
     refreshPlayerList()
-    updateESP()
 end)
 
 Players.PlayerRemoving:Connect(function(player)
     excludedPlayers[player.UserId] = nil
-    if espObjects[player.UserId] then
-        espObjects[player.UserId]:Destroy()
-        espObjects[player.UserId] = nil
+    if currentLockedTarget == player then
+        currentLockedTarget = nil
     end
     refreshPlayerList()
+    updateTargetLabel()
 end)
 
---// UI切換模式（最近敵人 / FOV優先）
-local ModeButton = createButton("模式：最近敵人", 250)
-
-ModeButton.MouseButton1Click:Connect(function()
-    useFOVPriority = not useFOVPriority
-    if useFOVPriority then
-        ModeButton.Text = "模式：最近敵人"
-    else
-        ModeButton.Text = "模式：FOV優先"
-    end
-end)
-
---// FOV大小顯示與調整
-local FOVLabel = Instance.new("TextLabel")
-FOVLabel.Size = UDim2.new(1, -20, 0, 20)
-FOVLabel.Position = UDim2.new(0, 10, 0, 370)
-FOVLabel.BackgroundTransparency = 1
-FOVLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
-FOVLabel.TextSize = 14
-FOVLabel.Text = "FOV大小：" .. FOVSize
-FOVLabel.Parent = MainFrame
-
-local FOVSlider = Instance.new("Slider")
-FOVSlider.Size = UDim2.new(1, -20, 0, 20)
-FOVSlider.Position = UDim2.new(0, 10, 0, 395)
-FOVSlider.Min = 30
-FOVSlider.Max = 180
-FOVSlider.Value = FOVSize
-FOVSlider.Parent = MainFrame
-
-FOVSlider.Changed:Connect(function(value)
-    FOVSize = math.round(value)
-    FOVLabel.Text = "FOV大小：" .. FOVSize
+LocalPlayer.CharacterAdded:Connect(function()
+    task.wait(0.3)
+    currentLockedTarget = nil
+    updateTargetLabel()
 end)
 
 --// 每幀更新
-local espTimer = 0
-RunService.RenderStepped:Connect(function(dt)
-    if autoAimEnabled then
-        local target = getTarget()
-        if target then
-            aimAtTarget(target)
+RunService.RenderStepped:Connect(function()
+    Camera = workspace.CurrentCamera
+
+    if lockEnabled then
+        if not currentLockedTarget or not isValidTarget(currentLockedTarget) then
+            currentLockedTarget = getBestTarget()
+        end
+        if currentLockedTarget then
+            aimAtTarget(currentLockedTarget)
         end
     end
-    espTimer += dt
-    if espTimer >= 0.25 then
-        espTimer = 0
-        updateESP()
-    end
+
+    updateTargetLabel()
+
+    local viewport = Camera.ViewportSize
+    local centerX = viewport.X / 2
+    local centerY = viewport.Y / 2
+
+    local radius = math.clamp(FOVAngle * 4, 40, math.min(viewport.X, viewport.Y) / 2)
+    FOVCircle.Size = UDim2.fromOffset(radius * 2, radius * 2)
+    FOVCircle.Position = UDim2.fromOffset(centerX - radius, centerY - radius)
+    FOVCircle.Visible = showFOVCircle and useFOVMode and MainFrame.Visible
 end)
 
 refreshPlayerList()
+setPlayerListVisible(true)
+updateTargetLabel()
