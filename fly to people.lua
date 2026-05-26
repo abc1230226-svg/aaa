@@ -1,17 +1,18 @@
 local Players = game:GetService("Players")
 local UserInputService = game:GetService("UserInputService")
+local RunService = game:GetService("RunService")
 
 local LocalPlayer = Players.LocalPlayer
-local UI_PARENT = game:GetService("CoreGui") -- 改為 CoreGui
+local UI_PARENT = game:GetService("CoreGui") -- 使用 CoreGui
 
--- 避免重複建立 UI
-local oldGui = UI_PARENT:FindFirstChild("TpToPlayerUI")
+-- 避免重複建立
+local oldGui = UI_PARENT:FindFirstChild("PlayerMarkerTPUI")
 if oldGui then
     oldGui:Destroy()
 end
 
 local ScreenGui = Instance.new("ScreenGui")
-ScreenGui.Name = "TpToPlayerUI"
+ScreenGui.Name = "PlayerMarkerTPUI"
 ScreenGui.ResetOnSpawn = false
 ScreenGui.Parent = UI_PARENT
 
@@ -21,21 +22,119 @@ local function addCorner(obj, radius)
     corner.Parent = obj
 end
 
--- 開關按鈕
-local OpenButton = Instance.new("TextButton")
-OpenButton.Size = UDim2.new(0, 70, 0, 35)
-OpenButton.Position = UDim2.new(0, 20, 0, 180)
-OpenButton.BackgroundColor3 = Color3.fromRGB(35, 35, 35)
-OpenButton.TextColor3 = Color3.new(1, 1, 1)
-OpenButton.TextSize = 16
-OpenButton.Font = Enum.Font.SourceSansBold
-OpenButton.Text = "TP"
-OpenButton.Parent = ScreenGui
-addCorner(OpenButton, 8)
+local function getRootPart(player)
+    local character = player.Character
+    if not character then return nil end
+    return character:FindFirstChild("HumanoidRootPart")
+end
 
--- 主框架
+local function getHead(player)
+    local character = player.Character
+    if not character then return nil end
+    return character:FindFirstChild("Head")
+end
+
+local currentMarker = nil
+local targetPlayer = nil
+local lastTpTime = 0
+local cooldown = 0.4
+
+-- 建立玩家頭上標記
+local function createMarker(player)
+    if currentMarker then
+        currentMarker:Destroy()
+        currentMarker = nil
+    end
+
+    local head = getHead(player)
+    local rootPart = getRootPart(player)
+
+    if not head and not rootPart then
+        return
+    end
+
+    local marker = Instance.new("BillboardGui")
+    marker.Name = "TargetMarker"
+    marker.Size = UDim2.new(0, 140, 0, 45)
+    marker.StudsOffset = Vector3.new(0, 3, 0)
+    marker.AlwaysOnTop = true
+    marker.Adornee = head or rootPart
+    marker.Parent = ScreenGui
+
+    local textLabel = Instance.new("TextLabel")
+    textLabel.Size = UDim2.new(1, 0, 1, 0)
+    textLabel.BackgroundTransparency = 1
+    textLabel.Text = "🔵 " .. player.Name
+    textLabel.TextColor3 = Color3.fromRGB(0, 255, 255)
+    textLabel.TextStrokeTransparency = 0
+    textLabel.TextScaled = true
+    textLabel.Font = Enum.Font.SourceSansBold
+    textLabel.Parent = marker
+
+    currentMarker = marker
+end
+
+local function canUse()
+    local now = os.clock()
+    if now - lastTpTime < cooldown then
+        return false
+    end
+    lastTpTime = now
+    return true
+end
+
+local function prepareMyCharacter()
+    local character = LocalPlayer.Character
+    if not character then
+        return nil, nil
+    end
+    local rootPart = getRootPart(LocalPlayer)
+    if not rootPart then
+        return nil, nil
+    end
+    local humanoid = character:FindFirstChildOfClass("Humanoid")
+    if humanoid then
+        humanoid.Sit = false
+    end
+    rootPart.AssemblyLinearVelocity = Vector3.zero
+    rootPart.AssemblyAngularVelocity = Vector3.zero
+    return character, rootPart
+end
+
+local function teleportBesidePlayer(player)
+    if not player or player == LocalPlayer then return end
+    if not canUse() then return end
+    local targetRoot = getRootPart(player)
+    if not targetRoot then return end
+    local character = prepareMyCharacter()
+    if not character then return end
+    character:PivotTo(targetRoot.CFrame * CFrame.new(0, 0, 4))
+end
+
+local function teleportAbovePlayer(player)
+    if not player or player == LocalPlayer then return end
+    if not canUse() then return end
+    local targetRoot = getRootPart(player)
+    if not targetRoot then return end
+    local character = prepareMyCharacter()
+    if not character then return end
+    character:PivotTo(CFrame.new(targetRoot.Position + Vector3.new(0, 5, 0)))
+end
+
+-- UI元素建構
+local ToggleButton = Instance.new("TextButton")
+ToggleButton.Size = UDim2.new(0, 70, 0, 35)
+ToggleButton.Position = UDim2.new(0, 20, 0, 150)
+ToggleButton.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
+ToggleButton.TextColor3 = Color3.new(1, 1, 1)
+ToggleButton.TextSize = 16
+ToggleButton.Font = Enum.Font.SourceSansBold
+ToggleButton.Text = "選人"
+ToggleButton.Parent = ScreenGui
+addCorner(ToggleButton, 8)
+
 local MainFrame = Instance.new("Frame")
-MainFrame.Size = UDim2.new(0, 280, 0, 370)
+MainFrame.Size = UDim2.new(0, 310, 0, 410)
 MainFrame.Position = UDim2.new(0, 100, 0, 100)
 MainFrame.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
 MainFrame.BackgroundTransparency = 0.08
@@ -45,7 +144,6 @@ MainFrame.Active = true
 MainFrame.Parent = ScreenGui
 addCorner(MainFrame, 10)
 
--- 上方標題列
 local TopBar = Instance.new("Frame")
 TopBar.Size = UDim2.new(1, 0, 0, 38)
 TopBar.BackgroundColor3 = Color3.fromRGB(15, 15, 15)
@@ -54,10 +152,10 @@ TopBar.Parent = MainFrame
 addCorner(TopBar, 10)
 
 local Title = Instance.new("TextLabel")
-Title.Size = UDim2.new(1, -85, 1, 0)
+Title.Size = UDim2.new(1, -90, 1, 0)
 Title.Position = UDim2.new(0, 12, 0, 0)
 Title.BackgroundTransparency = 1
-Title.Text = "玩家 TP 清單"
+Title.Text = "選擇玩家"
 Title.TextColor3 = Color3.new(1, 1, 1)
 Title.TextSize = 16
 Title.Font = Enum.Font.SourceSansBold
@@ -86,30 +184,28 @@ CloseButton.Text = "X"
 CloseButton.Parent = TopBar
 addCorner(CloseButton, 6)
 
--- 狀態文字
 local StatusLabel = Instance.new("TextLabel")
-StatusLabel.Size = UDim2.new(1, -12, 0, 24)
-StatusLabel.Position = UDim2.new(0, 6, 1, -30)
+StatusLabel.Size = UDim2.new(1, -12, 0, 26)
+StatusLabel.Position = UDim2.new(0, 6, 1, -32)
 StatusLabel.BackgroundTransparency = 1
 StatusLabel.TextColor3 = Color3.fromRGB(200, 200, 200)
 StatusLabel.TextSize = 13
 StatusLabel.Font = Enum.Font.SourceSans
-StatusLabel.Text = "點玩家旁邊按鈕即可 TP"
+StatusLabel.Text = "選擇一個玩家"
 StatusLabel.Parent = MainFrame
 
--- 玩家清單
-local PlayerList = Instance.new("ScrollingFrame")
-PlayerList.Size = UDim2.new(1, -12, 1, -78)
-PlayerList.Position = UDim2.new(0, 6, 0, 44)
-PlayerList.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
-PlayerList.BorderSizePixel = 0
-PlayerList.ScrollBarThickness = 6
-PlayerList.CanvasSize = UDim2.new(0, 0, 0, 0)
-PlayerList.Parent = MainFrame
-addCorner(PlayerList, 8)
+local ButtonContainer = Instance.new("ScrollingFrame")
+ButtonContainer.Size = UDim2.new(1, -12, 1, -82)
+ButtonContainer.Position = UDim2.new(0, 6, 0, 44)
+ButtonContainer.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+ButtonContainer.BorderSizePixel = 0
+ButtonContainer.ScrollBarThickness = 6
+ButtonContainer.CanvasSize = UDim2.new(0, 0, 0, 0)
+ButtonContainer.Parent = MainFrame
+addCorner(ButtonContainer, 8)
 
 local UIListLayout = Instance.new("UIListLayout")
-UIListLayout.Parent = PlayerList
+UIListLayout.Parent = ButtonContainer
 UIListLayout.Padding = UDim.new(0, 6)
 UIListLayout.SortOrder = Enum.SortOrder.LayoutOrder
 
@@ -118,13 +214,13 @@ UIPadding.PaddingTop = UDim.new(0, 6)
 UIPadding.PaddingLeft = UDim.new(0, 6)
 UIPadding.PaddingRight = UDim.new(0, 6)
 UIPadding.PaddingBottom = UDim.new(0, 6)
-UIPadding.Parent = PlayerList
+UIPadding.Parent = ButtonContainer
 
 UIListLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
-    PlayerList.CanvasSize = UDim2.new(0, 0, 0, UIListLayout.AbsoluteContentSize.Y + 12)
+    ButtonContainer.CanvasSize = UDim2.new(0, 0, 0, UIListLayout.AbsoluteContentSize.Y + 12)
 end)
 
--- 拖動 UI
+-- 拖動UI
 local dragging = false
 local dragStart
 local startPos
@@ -155,80 +251,9 @@ UserInputService.InputChanged:Connect(function(input)
     end
 end)
 
-local function getRootPart(player)
-    local character = player.Character
-    if not character then return nil end
-    return character:FindFirstChild("HumanoidRootPart")
-end
-
-local lastTpTime = 0
-local cooldown = 0.5
-
-local function canTp()
-    local now = os.clock()
-    if now - lastTpTime < cooldown then
-        StatusLabel.Text = "請不要點太快"
-        return false
-    end
-    lastTpTime = now
-    return true
-end
-
-local function prepareCharacter()
-    local character = LocalPlayer.Character
-    if not character then
-        StatusLabel.Text = "找不到你的角色"
-        return nil, nil
-    end
-    local rootPart = getRootPart(LocalPlayer)
-    if not rootPart then
-        StatusLabel.Text = "找不到你的 HumanoidRootPart"
-        return nil, nil
-    end
-    local humanoid = character:FindFirstChildOfClass("Humanoid")
-    if humanoid then
-        humanoid.Sit = false
-    end
-    rootPart.AssemblyLinearVelocity = Vector3.new()
-    rootPart.AssemblyAngularVelocity = Vector3.new()
-    return character, rootPart
-end
-
--- TP 到玩家旁邊
-local function teleportBesidePlayer(targetPlayer)
-    if not canTp() then return end
-    if not targetPlayer or targetPlayer == LocalPlayer then return end
-    local targetRootPart = getRootPart(targetPlayer)
-    if not targetRootPart then
-        StatusLabel.Text = "找不到目標玩家角色"
-        return
-    end
-    local character, rootPart = prepareCharacter()
-    if not character then return end
-    character:PivotTo(targetRootPart.CFrame * CFrame.new(0, 0, 4))
-    StatusLabel.Text = "已 TP 到：" .. targetPlayer.Name
-end
-
--- TP 到玩家頭上
-local function teleportAbovePlayer(targetPlayer)
-    if not canTp() then return end
-    if not targetPlayer or targetPlayer == LocalPlayer then return end
-    local targetRootPart = getRootPart(targetPlayer)
-    if not targetRootPart then
-        StatusLabel.Text = "找不到目標玩家角色"
-        return
-    end
-    local character, rootPart = prepareCharacter()
-    if not character then return end
-    -- 頭上約5格
-    local targetPos = targetRootPart.Position + Vector3.new(0, 5, 0)
-    character:PivotTo(CFrame.new(targetPos))
-    StatusLabel.Text = "已飛到 " .. targetPlayer.Name .. " 頭上"
-end
-
-local function clearButtons()
-    for _, child in ipairs(PlayerList:GetChildren()) do
-        if child:IsA("Frame") or child:IsA("TextButton") or child:IsA("TextLabel") then
+local function clearList()
+    for _, child in ipairs(ButtonContainer:GetChildren()) do
+        if child:IsA("Frame") or child:IsA("TextLabel") then
             child:Destroy()
         end
     end
@@ -242,19 +267,19 @@ local function createEmptyText()
     text.TextSize = 15
     text.Font = Enum.Font.SourceSans
     text.Text = "目前沒有其他玩家"
-    text.Parent = PlayerList
+    text.Parent = ButtonContainer
 end
 
 local function createPlayerRow(player)
     local Row = Instance.new("Frame")
-    Row.Size = UDim2.new(1, -10, 0, 46)
+    Row.Size = UDim2.new(1, -10, 0, 52)
     Row.BackgroundColor3 = Color3.fromRGB(45, 45, 45)
     Row.BorderSizePixel = 0
-    Row.Parent = PlayerList
+    Row.Parent = ButtonContainer
     addCorner(Row, 7)
 
     local NameLabel = Instance.new("TextLabel")
-    NameLabel.Size = UDim2.new(1, -150, 1, 0)
+    NameLabel.Size = UDim2.new(1, -190, 1, 0)
     NameLabel.Position = UDim2.new(0, 10, 0, 0)
     NameLabel.BackgroundTransparency = 1
     NameLabel.Text = player.Name
@@ -264,43 +289,67 @@ local function createPlayerRow(player)
     NameLabel.TextXAlignment = Enum.TextXAlignment.Left
     NameLabel.Parent = Row
 
-    local TpBtn = Instance.new("TextButton")
-    TpBtn.Size = UDim2.new(0, 60, 0, 30)
-    TpBtn.Position = UDim2.new(1, -132, 0.5, -15)
-    TpBtn.BackgroundColor3 = Color3.fromRGB(60, 90, 160)
-    TpBtn.TextColor3 = Color3.new(1, 1, 1)
-    TpBtn.TextSize = 13
-    TpBtn.Font = Enum.Font.SourceSansBold
-    TpBtn.Text = "旁邊"
-    TpBtn.Parent = Row
-    addCorner(TpBtn, 6)
+    local MarkButton = Instance.new("TextButton")
+    MarkButton.Size = UDim2.new(0, 50, 0, 32)
+    MarkButton.Position = UDim2.new(1, -166, 0.5, -16)
+    MarkButton.BackgroundColor3 = Color3.fromRGB(60, 120, 160)
+    MarkButton.TextColor3 = Color3.new(1, 1, 1)
+    MarkButton.TextSize = 13
+    MarkButton.Font = Enum.Font.SourceSansBold
+    MarkButton.Text = "標記"
+    MarkButton.Parent = Row
+    addCorner(MarkButton, 6)
 
-    local HeadBtn = Instance.new("TextButton")
-    HeadBtn.Size = UDim2.new(0, 60, 0, 30)
-    HeadBtn.Position = UDim2.new(1, -66, 0.5, -15)
-    HeadBtn.BackgroundColor3 = Color3.fromRGB(90, 120, 70)
-    HeadBtn.TextColor3 = Color3.new(1, 1, 1)
-    HeadBtn.TextSize = 13
-    HeadBtn.Font = Enum.Font.SourceSansBold
-    HeadBtn.Text = "頭上"
-    HeadBtn.Parent = Row
-    addCorner(HeadBtn, 6)
+    local TpButton = Instance.new("TextButton")
+    TpButton.Size = UDim2.new(0, 50, 0, 32)
+    TpButton.Position = UDim2.new(1, -110, 0.5, -16)
+    TpButton.BackgroundColor3 = Color3.fromRGB(70, 90, 160)
+    TpButton.TextColor3 = Color3.new(1, 1, 1)
+    TpButton.TextSize = 13
+    TpButton.Font = Enum.Font.SourceSansBold
+    TpButton.Text = "旁邊"
+    TpButton.Parent = Row
+    addCorner(TpButton, 6)
 
-    TpBtn.MouseButton1Click:Connect(function()
-        teleportBesidePlayer(player)
+    local HeadButton = Instance.new("TextButton")
+    HeadButton.Size = UDim2.new(0, 50, 0, 32)
+    HeadButton.Position = UDim2.new(1, -54, 0.5, -16)
+    HeadButton.BackgroundColor3 = Color3.fromRGB(90, 120, 70)
+    HeadButton.TextColor3 = Color3.new(1, 1, 1)
+    HeadButton.TextSize = 13
+    HeadButton.Font = Enum.Font.SourceSansBold
+    HeadButton.Text = "頭上"
+    HeadButton.Parent = Row
+    addCorner(HeadButton, 6)
+
+    -- 事件綁定
+    MarkButton.MouseButton1Click:Connect(function()
+        targetPlayer = player
+        createMarker(player)
+        StatusLabel.Text = "已標記：" .. player.Name
     end)
 
-    HeadBtn.MouseButton1Click:Connect(function()
+    TpButton.MouseButton1Click:Connect(function()
+        targetPlayer = player
+        createMarker(player)
+        teleportBesidePlayer(player)
+        StatusLabel.Text = "已 TP 到：" .. player.Name
+    end)
+
+    HeadButton.MouseButton1Click:Connect(function()
+        targetPlayer = player
+        createMarker(player)
         teleportAbovePlayer(player)
+        StatusLabel.Text = "已飛到 " .. player.Name .. " 頭上"
     end)
 end
 
-local function refreshPlayerButtons()
-    clearButtons()
+local function refreshPlayerList()
+    clearList()
     local count = 0
     for _, player in ipairs(Players:GetPlayers()) do
         if player ~= LocalPlayer then
-            count += 1
+            count = count + 1
             createPlayerRow(player)
         end
     end
@@ -309,12 +358,11 @@ local function refreshPlayerButtons()
     end
 end
 
--- 開關 UI
-OpenButton.MouseButton1Click:Connect(function()
+-- 按鈕事件
+ToggleButton.MouseButton1Click:Connect(function()
     MainFrame.Visible = not MainFrame.Visible
     if MainFrame.Visible then
-        refreshPlayerButtons()
-        StatusLabel.Text = "點玩家旁邊按鈕即可 TP"
+        refreshPlayerList()
     end
 end)
 
@@ -323,32 +371,54 @@ CloseButton.MouseButton1Click:Connect(function()
 end)
 
 RefreshButton.MouseButton1Click:Connect(function()
-    refreshPlayerButtons()
+    refreshPlayerList()
     StatusLabel.Text = "已刷新玩家列表"
 end)
 
+-- 玩家離開或加入
 Players.PlayerAdded:Connect(function()
     if MainFrame.Visible then
-        refreshPlayerButtons()
+        refreshPlayerList()
     end
 end)
 
-Players.PlayerRemoving:Connect(function()
+Players.PlayerRemoving:Connect(function(player)
+    if targetPlayer == player then
+        targetPlayer = nil
+        if currentMarker then
+            currentMarker:Destroy()
+            currentMarker = nil
+        end
+        StatusLabel.Text = "目標玩家已離開"
+    end
     if MainFrame.Visible then
-        task.delay(0.1, refreshPlayerButtons)
+        task.delay(0.1, function() refreshPlayerList() end)
     end
 end)
 
--- 按 RightShift 也可以開關
+-- 快捷鍵開關UI
 UserInputService.InputBegan:Connect(function(input, gameProcessed)
     if gameProcessed then return end
     if input.KeyCode == Enum.KeyCode.RightShift then
         MainFrame.Visible = not MainFrame.Visible
         if MainFrame.Visible then
-            refreshPlayerButtons()
-            StatusLabel.Text = "點玩家旁邊按鈕即可 TP"
+            refreshPlayerList()
         end
     end
 end)
 
-refreshPlayerButtons()
+-- 持續同步標記
+RunService.RenderStepped:Connect(function()
+    if currentMarker and targetPlayer and targetPlayer.Character then
+        local head = getHead(targetPlayer)
+        local rootPart = getRootPart(targetPlayer)
+        if head then
+            currentMarker.Adornee = head
+        elseif rootPart then
+            currentMarker.Adornee = rootPart
+        end
+    end
+end)
+
+-- 初始化
+refreshPlayerList()
