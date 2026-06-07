@@ -1,18 +1,20 @@
--- UI部分
+-- 注入器用完整版本
+-- 請將此腳本貼入你的注入器並執行
+
+-- 確保在本地端運行
 local Players = game:GetService("Players")
 local player = Players.LocalPlayer
-
 if not player then
-	warn("這個程式碼要放在 LocalScript 裡面才會有 UI")
-	return
+    warn("此腳本需在本地端執行，請在本地端環境插入")
+    return
 end
 
 local gui = player:WaitForChild("PlayerGui")
 
--- 避免重複產生 UI
+-- 避免重複創建UI
 local oldGui = gui:FindFirstChild("DropRateMod")
 if oldGui then
-	oldGui:Destroy()
+    oldGui:Destroy()
 end
 
 local ScreenGui = Instance.new("ScreenGui")
@@ -23,7 +25,7 @@ ScreenGui.IgnoreGuiInset = true
 ScreenGui.DisplayOrder = 999999
 ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
 
--- 左上角開啟按鈕
+-- UI按鈕：開啟/關閉UI
 local openButton = Instance.new("TextButton")
 openButton.Size = UDim2.new(0, 120, 0, 40)
 openButton.Position = UDim2.new(0, 20, 0, 80)
@@ -94,84 +96,88 @@ closeButton.AutoButtonColor = true
 closeButton.ZIndex = 21
 closeButton.Parent = frame
 
+-- 按鈕事件：開啟/關閉UI
 openButton.MouseButton1Click:Connect(function()
-	frame.Visible = not frame.Visible
+    frame.Visible = not frame.Visible
 end)
 
 closeButton.MouseButton1Click:Connect(function()
-	frame.Visible = false
+    frame.Visible = false
 end)
 
-local targetVar -- 用來存找到的變數
+local targetVar -- 用於存放找到的變數
 
--- 自訂搜尋函數
+-- 搜尋掉落率變數
 local function searchDropChance()
-	if typeof(getgc) ~= "function" then
-		status.Text = "這個環境沒有 getgc()"
-		warn("這個環境沒有 getgc()")
-		return nil
-	end
+    if typeof(getgc) ~= "function" then
+        status.Text = "此環境未支援 getgc()"
+        warn("此環境未支援 getgc()")
+        return nil
+    end
 
-	local gcObjects = getgc(true)
-
-	for i, v in ipairs(gcObjects) do
-		if typeof(v) == "number" then
-			-- 篩選範圍在0.01到1之間的數字
-			if v >= 0.01 and v <= 1 then
-				print("可能的掉落率：", v)
-				targetVar = v
-				return v
-			end
-		end
-	end
-
-	return nil
+    local gcObjects = getgc(true)
+    for i, v in ipairs(gcObjects) do
+        if typeof(v) == "number" then
+            if v >= 0.01 and v <= 1 then
+                print("可能的掉落率：", v)
+                targetVar = v
+                return v
+            end
+        end
+    end
+    return nil
 end
 
--- 嘗試修改變數
+-- 嘗試修改找到的變數
 local function modifyDropChance(newChance)
-	if typeof(getgc) ~= "function" then
-		return false
-	end
+    if typeof(getgc) ~= "function" then
+        return false
+    end
 
-	for i, v in ipairs(getgc(true)) do
-		if v == targetVar then
-			print("找到目標變數，預備修改為：", newChance)
-
-			-- 這裡不一定能直接改
-			-- 如果你知道變數在哪個table中，例如 game.ReplicatedStorage.DropChance
-			-- 你可以直接修改
-			return true
-		end
-	end
-
-	return false
+    for i, v in ipairs(getgc(true)) do
+        if v == targetVar then
+            print("找到目標變數，預備修改為：", newChance)
+            -- 你需要根據實際情況修改對應的變數
+            -- 這裡示範：假設你找到的變數是在某個表中
+            -- 例如：game.ReplicatedStorage.DropChance = newChance
+            -- 你可以在此處加入你的修改程式碼
+            -- 例如：
+            -- game.ReplicatedStorage.DropChance = newChance
+            -- 或者其他你知道的變數位置
+            return true
+        end
+    end
+    return false
 end
 
 local function onClick()
-	status.Text = "正在搜尋..."
-	btn.Text = "搜尋中..."
-	btn.BackgroundColor3 = Color3.fromRGB(255, 170, 0)
+    status.Text = "正在搜尋..."
+    btn.Text = "搜尋中..."
+    btn.BackgroundColor3 = Color3.fromRGB(255, 170, 0)
 
-	local found = searchDropChance()
+    local found = searchDropChance()
 
-	if found then
-		local success = modifyDropChance(0.99)
-
-		if success then
-			status.Text = "掉落率已設定為99%"
-			btn.Text = "設定成功"
-			btn.BackgroundColor3 = Color3.fromRGB(0, 180, 90)
-		else
-			status.Text = "修改失敗，請手動調整"
-			btn.Text = "修改失敗"
-			btn.BackgroundColor3 = Color3.fromRGB(200, 70, 70)
-		end
-	else
-		status.Text = "未找到可能的掉落率變數"
-		btn.Text = "搜尋失敗"
-		btn.BackgroundColor3 = Color3.fromRGB(200, 70, 70)
-	end
+    if found then
+        local success = modifyDropChance(0.99)
+        if success then
+            status.Text = "掉落率已設定為99%"
+            btn.Text = "設定成功"
+            btn.BackgroundColor3 = Color3.fromRGB(0, 180, 90)
+        else
+            status.Text = "修改失敗，請手動調整"
+            btn.Text = "修改失敗"
+            btn.BackgroundColor3 = Color3.fromRGB(200, 70, 70)
+        end
+    else
+        status.Text = "未找到可能的掉落率變數"
+        btn.Text = "搜尋失敗"
+        btn.BackgroundColor3 = Color3.fromRGB(200, 70, 70)
+    end
 end
 
+-- 你可以在此加入測試按鈕或其他功能
+-- 例如：直接呼叫 onClick() 來測試
+-- onClick()
+
+-- 綁定按鈕事件
 btn.MouseButton1Click:Connect(onClick)
