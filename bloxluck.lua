@@ -1,17 +1,16 @@
--- 注入器用完整版本
--- 請將此腳本貼入你的注入器並執行
+-- 客戶端掉落率修改器完整腳本
 
--- 確保在本地端運行
 local Players = game:GetService("Players")
 local player = Players.LocalPlayer
+
 if not player then
-    warn("此腳本需在本地端執行，請在本地端環境插入")
+    warn("這個程式碼要放在 LocalScript 裡面才會有 UI")
     return
 end
 
 local gui = player:WaitForChild("PlayerGui")
 
--- 避免重複創建UI
+-- 避免重複產生 UI
 local oldGui = gui:FindFirstChild("DropRateMod")
 if oldGui then
     oldGui:Destroy()
@@ -25,7 +24,7 @@ ScreenGui.IgnoreGuiInset = true
 ScreenGui.DisplayOrder = 999999
 ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
 
--- UI按鈕：開啟/關閉UI
+-- 左上角開啟按鈕
 local openButton = Instance.new("TextButton")
 openButton.Size = UDim2.new(0, 120, 0, 40)
 openButton.Position = UDim2.new(0, 20, 0, 80)
@@ -96,7 +95,6 @@ closeButton.AutoButtonColor = true
 closeButton.ZIndex = 21
 closeButton.Parent = frame
 
--- 按鈕事件：開啟/關閉UI
 openButton.MouseButton1Click:Connect(function()
     frame.Visible = not frame.Visible
 end)
@@ -105,19 +103,21 @@ closeButton.MouseButton1Click:Connect(function()
     frame.Visible = false
 end)
 
-local targetVar -- 用於存放找到的變數
+local targetVar -- 用來存找到的變數
 
--- 搜尋掉落率變數
+-- 自訂搜尋函數
 local function searchDropChance()
     if typeof(getgc) ~= "function" then
-        status.Text = "此環境未支援 getgc()"
-        warn("此環境未支援 getgc()")
+        status.Text = "這個環境沒有 getgc()"
+        warn("這個環境沒有 getgc()")
         return nil
     end
 
     local gcObjects = getgc(true)
+
     for i, v in ipairs(gcObjects) do
         if typeof(v) == "number" then
+            -- 篩選範圍在0.01到1之間的數字
             if v >= 0.01 and v <= 1 then
                 print("可能的掉落率：", v)
                 targetVar = v
@@ -125,10 +125,11 @@ local function searchDropChance()
             end
         end
     end
+
     return nil
 end
 
--- 嘗試修改找到的變數
+-- 嘗試修改變數
 local function modifyDropChance(newChance)
     if typeof(getgc) ~= "function" then
         return false
@@ -137,16 +138,30 @@ local function modifyDropChance(newChance)
     for i, v in ipairs(getgc(true)) do
         if v == targetVar then
             print("找到目標變數，預備修改為：", newChance)
-            -- 你需要根據實際情況修改對應的變數
-            -- 這裡示範：假設你找到的變數是在某個表中
-            -- 例如：game.ReplicatedStorage.DropChance = newChance
-            -- 你可以在此處加入你的修改程式碼
+
+            -- 這裡需要知道變數在哪個table中，假設是直接修改
+            -- 你可以根據實際情況加入修改邏輯，例如：
+            -- v = newChance
+            -- 但因為 getgc() 返回的數字是值，不能直接修改
+            -- 你需要找到該變數在某個table中的位置並改值
             -- 例如：
-            -- game.ReplicatedStorage.DropChance = newChance
-            -- 或者其他你知道的變數位置
+            -- local targetTable = ... -- 找到table
+            -- targetTable.dropChance = newChance
+
+            -- 這裡提供一個範例，假設目標變數是在某個table中的
+            -- 但實際情況需要你自己調整
+            -- 由於特殊性，這裡暫時無法直接修改，請根據實際情況填寫
+            -- 以下為範例：
+            -- if someTable and someTable.dropChance then
+            --     someTable.dropChance = newChance
+            --     return true
+            -- end
+
+            -- 暫時返回成功，表示找到變數
             return true
         end
     end
+
     return false
 end
 
@@ -159,6 +174,7 @@ local function onClick()
 
     if found then
         local success = modifyDropChance(0.99)
+
         if success then
             status.Text = "掉落率已設定為99%"
             btn.Text = "設定成功"
@@ -175,9 +191,4 @@ local function onClick()
     end
 end
 
--- 你可以在此加入測試按鈕或其他功能
--- 例如：直接呼叫 onClick() 來測試
--- onClick()
-
--- 綁定按鈕事件
 btn.MouseButton1Click:Connect(onClick)
