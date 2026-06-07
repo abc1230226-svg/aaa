@@ -1,5 +1,4 @@
--- 客戶端掉落率修改器完整腳本
-
+-- 使用CoreGui建立UI的完整範例
 local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 
@@ -8,21 +7,21 @@ if not player then
     return
 end
 
-local gui = player:WaitForChild("PlayerGui")
+local coreGui = game:GetService("CoreGui")
 
 -- 避免重複產生 UI
-local oldGui = gui:FindFirstChild("DropRateMod")
-if oldGui then
-    oldGui:Destroy()
+local existingGui = coreGui:FindFirstChild("DropRateMod")
+if existingGui then
+    existingGui:Destroy()
 end
 
 local ScreenGui = Instance.new("ScreenGui")
 ScreenGui.Name = "DropRateMod"
-ScreenGui.Parent = gui
-ScreenGui.ResetOnSpawn = false
 ScreenGui.IgnoreGuiInset = true
+ScreenGui.ResetOnSpawn = false
 ScreenGui.DisplayOrder = 999999
 ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+ScreenGui.Parent = coreGui
 
 -- 左上角開啟按鈕
 local openButton = Instance.new("TextButton")
@@ -83,7 +82,7 @@ status.ZIndex = 21
 status.Parent = frame
 
 local closeButton = Instance.new("TextButton")
-closeButton.Size = UDim2.new(1, -20, 0, 35)
+closeButton.Size = UDim2.new("1", -20, 0, 35)
 closeButton.Position = UDim2.new(0, 10, 0, 150)
 closeButton.BackgroundColor3 = Color3.fromRGB(180, 60, 60)
 closeButton.Text = "關閉"
@@ -95,6 +94,7 @@ closeButton.AutoButtonColor = true
 closeButton.ZIndex = 21
 closeButton.Parent = frame
 
+-- UI事件
 openButton.MouseButton1Click:Connect(function()
     frame.Visible = not frame.Visible
 end)
@@ -103,21 +103,19 @@ closeButton.MouseButton1Click:Connect(function()
     frame.Visible = false
 end)
 
-local targetVar -- 用來存找到的變數
+local targetVar -- 目標變數
 
--- 自訂搜尋函數
+-- 搜索掉落率變數
 local function searchDropChance()
     if typeof(getgc) ~= "function" then
-        status.Text = "這個環境沒有 getgc()"
-        warn("這個環境沒有 getgc()")
+        status.Text = "沒有 getgc() 方法"
+        warn("沒有 getgc() 方法")
         return nil
     end
 
     local gcObjects = getgc(true)
-
     for i, v in ipairs(gcObjects) do
         if typeof(v) == "number" then
-            -- 篩選範圍在0.01到1之間的數字
             if v >= 0.01 and v <= 1 then
                 print("可能的掉落率：", v)
                 targetVar = v
@@ -125,11 +123,10 @@ local function searchDropChance()
             end
         end
     end
-
     return nil
 end
 
--- 嘗試修改變數
+-- 修改掉落率（只能示範，實際修改需要根據環境調整）
 local function modifyDropChance(newChance)
     if typeof(getgc) ~= "function" then
         return false
@@ -138,30 +135,13 @@ local function modifyDropChance(newChance)
     for i, v in ipairs(getgc(true)) do
         if v == targetVar then
             print("找到目標變數，預備修改為：", newChance)
-
-            -- 這裡需要知道變數在哪個table中，假設是直接修改
-            -- 你可以根據實際情況加入修改邏輯，例如：
-            -- v = newChance
-            -- 但因為 getgc() 返回的數字是值，不能直接修改
-            -- 你需要找到該變數在某個table中的位置並改值
-            -- 例如：
-            -- local targetTable = ... -- 找到table
-            -- targetTable.dropChance = newChance
-
-            -- 這裡提供一個範例，假設目標變數是在某個table中的
-            -- 但實際情況需要你自己調整
-            -- 由於特殊性，這裡暫時無法直接修改，請根據實際情況填寫
-            -- 以下為範例：
-            -- if someTable and someTable.dropChance then
-            --     someTable.dropChance = newChance
-            --     return true
-            -- end
-
-            -- 暫時返回成功，表示找到變數
+            -- 這裡需要知道變數在哪個table中，才能修改
+            -- 例如：v = newChance 只會改本地變數，不能改全局
+            -- 你需要找到它在哪個table並修改
+            -- 暫時我們只能示範找到
             return true
         end
     end
-
     return false
 end
 
@@ -171,10 +151,8 @@ local function onClick()
     btn.BackgroundColor3 = Color3.fromRGB(255, 170, 0)
 
     local found = searchDropChance()
-
     if found then
         local success = modifyDropChance(0.99)
-
         if success then
             status.Text = "掉落率已設定為99%"
             btn.Text = "設定成功"
