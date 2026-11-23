@@ -215,6 +215,196 @@ ScreenGui.Destroying:Connect(function()
     if walkCharacterConnection then walkCharacterConnection:Disconnect() end
 end)
 
+-- ===== 射擊間隔（客戶端 Hook，僅針對目前裝備的 Tool） =====
+-- 這是通用的最佳努力版本：只攔截 Tool / 子物件的數字屬性與 NumberValue 讀取。
+-- 遊戲如使用 ModuleScript 私有變數、task.wait、或伺服器判定，則不一定有效。
+local fireInterval = 0.10 -- 每次射擊間隔（秒）；0.10 秒 = 理論 600 RPM
+local fireStateKey = "__fly_to_people_fire_interval_hook_v1"
+local fireState = hookEnv and hookEnv[fireStateKey] or nil
+if type(fireState) ~= "table" then
+    fireState = {
+        enabled = true,
+        interval = fireInterval,
+        members = setmetatable({}, {__mode = "k"}),
+        tool = nil,
+        candidates = 0,
+        readHits = 0,
+        indexInstalled = false,
+        namecallInstalled = false,
+    }
+    if hookEnv then hookEnv[fireStateKey] = fireState end
+end
+fireState.enabled = true
+fireState.interval = fireInterval
+fireState.tool = nil
+fireState.members = setmetatable({}, {__mode = "k"})
+fireState.candidates = 0
+fireState.readHits = 0
+
+-- 不要攔截所有 task.wait / RemoteEvent，避免破壞其它功能。
+local intervalKeys = {
+    firedelay=true, fireinterval=true, shotdelay=true, shotinterval=true,
+    shootdelay=true, shootinterval=true, timebetweenshots=true,
+    shotcooldown=true, shootcooldown=true, firecooldown=true,
+    weaponcooldown=true, bulletsdelay=true,
+}
+local rpmKeys = {rpm=true, roundsperminute=true}
+local perSecondKeys = {shotspersecond=true, roundspersecond=true, shotspersec=true}
+local ambiguousKeys = {firerate=true, shootrate=true, rateoffire=true}
+
+local function normalizeFireKey(key)
+    if type(key) ~= "string" then return nil end
+    return (string.lower(key):gsub("[^%w]", ""))
+end
+
+local function fireValueFor(key, original)
+    if type(original) ~= "number" or original ~= original then return nil end
+    local name = normalizeFireKey(key)
+    if not name then return nil end
+    local interval = fireState.interval
+    if intervalKeys[name] then
+        return interval
+    elseif rpmKeys[name] then
+        return 60 / interval
+    elseif perSecondKeys[name] then
+        return 1 / interval
+    elseif ambiguousKeys[name] then
+        -- 各遊戲對 FireRate 的單位定義不同，根據原值推測：
+        -- >=30：RPM；2~30：每秒次數；<2：秒/發。
+        if original >= 30 then return 60 / interval end
+        if original >= 2 then return 1 / interval end
+        return interval
+    end
+    return nil
+end
+
+local function refreshEquippedFireTool()
+    local character = LocalPlayer.Character
+    local tool = character and character:FindFirstChildOfClass("Tool")
+    if tool == fireState.tool then return end
+    fireState.tool = tool
+    fireState.members = setmetatable({}, {__mode = "k"})
+    fireState.candidates = 0
+    if not tool then return end
+
+    local function register(inst)
+        fireState.members[inst] = true
+        if inst:IsA("NumberValue") or inst:IsA("IntValue") then
+            if fireValueFor(inst.Name, inst.Value) ~= nil then
+                fireState.candidates += 1
+            end
+        end
+        for attrName, value in pairs(inst:GetAttributes()) do
+            if fireValueFor(attrName, value) ~= nil then
+                fireState.candidates += 1
+            end
+        end
+    end
+    register(tool)
+    for _, descendant in ipairs(tool:GetDescendants()) do
+        register(descendant)
+    end
+end
+
+local function isOtherLocalScript()
+    if type(checkcaller) ~= "function" then return true end
+    local ok, own = pcall(checkcaller)
+    return not (ok and own == true)
+end
+
+local function installFireIntervalHooks()
+    if type(hookmetamethod) ~= "function" then
+        warn("[射擊間隔] 不支援 hookmetamethod，無法安裝通用攔截")
+        return
+    end
+    if not fireState.indexInstalled then
+        local oldIndex
+        local function indexed(self, property)
+            if fireState.enabled and property == "Value" and fireState.members[self]
+                and isOtherLocalScript() then
+                local original = oldIndex(self, property)
+                local name = oldIndex(self, "Name")
+                local replacement = fireValueFor(name, original)
+                if replacement ~= nil then
+                    fireState.readHits += 1
+                    return replacement
+                end
+            end
+            return oldIndex(self, property)
+        end
+        local replacement = indexed
+        if type(newcclosure) == "function" then
+            local ok, result = pcall(newcclosure, indexed)
+            if ok then replacement = result end
+        end
+        local ok, result = pcall(function()
+            return hookmetamethod(game, "__index", replacement)
+        end)
+        if ok and type(result) == "function" then
+            oldIndex = result
+            fireState.indexInstalled = true
+        else
+            warn("[射擊間隔] __index Hook 安裝失敗：", result)
+        end
+    end
+
+    if not fireState.namecallInstalled and type(getnamecallmethod) == "function" then
+        local oldNamecall
+        local function named(self, ...)
+            if fireState.enabled and fireState.members[self] and isOtherLocalScript() then
+                local method = getnamecallmethod()
+                if method == "GetAttribute" then
+                    local name = select(1, ...)
+                    if type(name) == "string" then
+                        local original = oldNamecall(self, ...)
+                        local replacement = fireValueFor(name, original)
+                        if replacement ~= nil then
+                            fireState.readHits += 1
+                            return replacement
+                        end
+                        return original
+                    end
+                elseif method == "GetAttributes" then
+                    local all = oldNamecall(self, ...)
+                    if type(all) == "table" then
+                        for name, original in pairs(all) do
+                            local replacement = fireValueFor(name, original)
+                            if replacement ~= nil then
+                                all[name] = replacement
+                                fireState.readHits += 1
+                            end
+                        end
+                    end
+                    return all
+                end
+            end
+            return oldNamecall(self, ...)
+        end
+        local replacement = named
+        if type(newcclosure) == "function" then
+            local ok, result = pcall(newcclosure, named)
+            if ok then replacement = result end
+        end
+        local ok, result = pcall(function()
+            return hookmetamethod(game, "__namecall", replacement)
+        end)
+        if ok and type(result) == "function" then
+            oldNamecall = result
+            fireState.namecallInstalled = true
+        else
+            warn("[射擊間隔] __namecall Hook 安裝失敗：", result)
+        end
+    end
+    print("[射擊間隔] Hook 已設置，裝備 Tool 時會檢查常見的射擊間隔設定")
+end
+
+installFireIntervalHooks()
+refreshEquippedFireTool()
+-- 舊版腳本被取代時停用舊 Hook，避免重複干擾。
+ScreenGui.Destroying:Connect(function()
+    fireState.enabled = false
+end)
+
 local ToggleButton = Instance.new("TextButton")
 ToggleButton.Size = UDim2.new(0, 75, 0, 35)
 ToggleButton.Position = UDim2.new(0, 20, 0, 150)
@@ -227,7 +417,7 @@ ToggleButton.Parent = ScreenGui
 addCorner(ToggleButton, 8)
 
 local MainFrame = Instance.new("Frame")
-MainFrame.Size = UDim2.new(0, 360, 0, 360)
+MainFrame.Size = UDim2.new(0, 360, 0, 430)
 MainFrame.Position = UDim2.new(0, 100, 0, 100)
 MainFrame.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
 MainFrame.BackgroundTransparency = 0.08
@@ -535,6 +725,115 @@ ScreenGui.Destroying:Connect(function()
     diagnosticConnection:Disconnect()
 end)
 
+-- ===== 新增：射擊間隔控制列（僅客戶端槍械設定） =====
+local FireFrame = Instance.new("Frame")
+FireFrame.Size = UDim2.new(1, -12, 0, 58)
+FireFrame.Position = UDim2.new(0, 6, 0, 186)
+FireFrame.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+FireFrame.BorderSizePixel = 0
+FireFrame.Parent = MainFrame
+addCorner(FireFrame, 8)
+
+local FireLabel = Instance.new("TextLabel")
+FireLabel.Size = UDim2.new(0, 74, 0, 26)
+FireLabel.Position = UDim2.new(0, 8, 0, 4)
+FireLabel.BackgroundTransparency = 1
+FireLabel.TextColor3 = Color3.new(1, 1, 1)
+FireLabel.Font = Enum.Font.SourceSansBold
+FireLabel.TextSize = 13
+FireLabel.TextXAlignment = Enum.TextXAlignment.Left
+FireLabel.Text = "射擊間隔"
+FireLabel.Parent = FireFrame
+
+local FireInput = Instance.new("TextBox")
+FireInput.Size = UDim2.new(0, 63, 0, 26)
+FireInput.Position = UDim2.new(0, 83, 0, 4)
+FireInput.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
+FireInput.TextColor3 = Color3.new(1, 1, 1)
+FireInput.Font = Enum.Font.SourceSansBold
+FireInput.TextSize = 14
+FireInput.Text = string.format("%.2f", fireInterval)
+FireInput.ClearTextOnFocus = false
+FireInput.Parent = FireFrame
+addCorner(FireInput, 5)
+
+local function fireButton(text, x, width)
+    local button = Instance.new("TextButton")
+    button.Size = UDim2.new(0, width, 0, 26)
+    button.Position = UDim2.new(0, x, 0, 4)
+    button.BackgroundColor3 = Color3.fromRGB(55, 55, 55)
+    button.TextColor3 = Color3.new(1, 1, 1)
+    button.TextSize = 13
+    button.Font = Enum.Font.SourceSansBold
+    button.Text = text
+    button.Parent = FireFrame
+    addCorner(button, 5)
+    return button
+end
+
+local FireDown = fireButton("−", 152, 29)
+local FireUp = fireButton("＋", 185, 29)
+local FireToggle = fireButton("攔截：開", 218, 73)
+local FireReset = fireButton("0.10", 295, 46)
+
+local FireDetail = Instance.new("TextLabel")
+FireDetail.Size = UDim2.new(1, -14, 0, 18)
+FireDetail.Position = UDim2.new(0, 8, 0, 35)
+FireDetail.BackgroundTransparency = 1
+FireDetail.TextColor3 = Color3.fromRGB(200, 200, 200)
+FireDetail.TextSize = 11
+FireDetail.Font = Enum.Font.SourceSans
+FireDetail.TextXAlignment = Enum.TextXAlignment.Left
+FireDetail.Text = "等待裝備槍械 Tool..."
+FireDetail.Parent = FireFrame
+
+local function updateFireInterval(newValue)
+    local n = tonumber(newValue)
+    if not n or n ~= n or n == math.huge or n == -math.huge then return end
+    fireInterval = math.clamp(math.floor(n * 1000 + 0.5) / 1000, 0.01, 5)
+    fireState.interval = fireInterval
+    FireInput.Text = string.format("%.3f", fireInterval)
+end
+
+FireInput.FocusLost:Connect(function()
+    updateFireInterval(FireInput.Text)
+    FireInput.Text = string.format("%.3f", fireInterval)
+end)
+FireDown.MouseButton1Click:Connect(function()
+    updateFireInterval(fireInterval - 0.01)
+end)
+FireUp.MouseButton1Click:Connect(function()
+    updateFireInterval(fireInterval + 0.01)
+end)
+FireReset.MouseButton1Click:Connect(function()
+    updateFireInterval(0.10)
+end)
+FireToggle.MouseButton1Click:Connect(function()
+    fireState.enabled = not fireState.enabled
+    FireToggle.Text = fireState.enabled and "攔截：開" or "攔截：關"
+    FireToggle.BackgroundColor3 = fireState.enabled
+        and Color3.fromRGB(55, 88, 55) or Color3.fromRGB(90, 60, 60)
+end)
+
+local fireStatusElapsed = 0
+local fireStatusConnection = RunService.Heartbeat:Connect(function(dt)
+    fireStatusElapsed += dt
+    if fireStatusElapsed < 0.6 then return end
+    fireStatusElapsed = 0
+    refreshEquippedFireTool()
+    if not fireState.indexInstalled and not fireState.namecallInstalled then
+        FireDetail.Text = "執行環境不支援 Hook；此功能無法運作"
+    elseif not fireState.tool then
+        FireDetail.Text = "尚未裝備 Tool｜攔截讀取 " .. fireState.readHits
+    else
+        FireDetail.Text = string.format("%s｜偵測欄位 %d｜攔截讀取 %d",
+            fireState.tool.Name, fireState.candidates, fireState.readHits)
+    end
+end)
+ScreenGui.Destroying:Connect(function()
+    fireStatusConnection:Disconnect()
+end)
+
 local StatusLabel = Instance.new("TextLabel")
 StatusLabel.Size = UDim2.new(1, -12, 0, 26)
 StatusLabel.Position = UDim2.new(0, 6, 1, -32)
@@ -546,8 +845,8 @@ StatusLabel.Text = "選擇一個玩家"
 StatusLabel.Parent = MainFrame
 
 local PlayerList = Instance.new("ScrollingFrame")
-PlayerList.Size = UDim2.new(1, -12, 1, -224)
-PlayerList.Position = UDim2.new(0, 6, 0, 188)
+PlayerList.Size = UDim2.new(1, -12, 1, -294)
+PlayerList.Position = UDim2.new(0, 6, 0, 258)
 PlayerList.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
 PlayerList.BorderSizePixel = 0
 
