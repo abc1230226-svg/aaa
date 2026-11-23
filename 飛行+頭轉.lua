@@ -48,28 +48,95 @@ local lastUseTime = 0
 local cooldown = 0.35
 
 -- ===== 行走速度設定 (與飛行速度獨立) =====
-local walkSpeed = 50 -- 啟動時的 WalkSpeed；原廠常見預設為 16
+local walkSpeed = 50  -- 可改預設速度
+local walkHumanoid = nil
+local walkWatchConnection = nil
+local walkCharacterConnection = nil
+local walkLastWarnTime = -math.huge
+local walkLastRestoreTime = -math.huge
+local walkResetCount = 0
+
+-- 監控實際 WalkSpeed：如果其他腳本改了數值，記錄並嘗試恢復。
+-- 注意：這只能處理 WalkSpeed 屬性被覆寫，不保證突破遊戲伺服器的移動限制。
+local function watchWalkHumanoid(character)
+    if walkWatchConnection then
+        walkWatchConnection:Disconnect()
+        walkWatchConnection = nil
+    end
+    walkHumanoid = nil
+    if not character then return end
+
+    local humanoid = character:FindFirstChildOfClass("Humanoid")
+        or character:WaitForChild("Humanoid", 10)
+    if not humanoid then
+        warn("[WalkSpeed] 找不到 Humanoid，無法設定速度")
+        return
+    end
+
+    walkHumanoid = humanoid
+    humanoid.WalkSpeed = walkSpeed
+    print("[WalkSpeed] 已套用設定速度：", humanoid.WalkSpeed)
+
+    walkWatchConnection = humanoid:GetPropertyChangedSignal("WalkSpeed"):Connect(function()
+        if walkHumanoid ~= humanoid or not humanoid.Parent then return end
+        local actualSpeed = humanoid.WalkSpeed
+        if math.abs(actualSpeed - walkSpeed) < 0.01 then return end
+
+        walkResetCount += 1
+        local now = os.clock()
+        if now - walkLastWarnTime >= 2 then
+            warn(string.format(
+                "[WalkSpeed] 偵測到速度被改為 %.1f（設定 %.1f），累計 %d 次；嘗試恢復。",
+                actualSpeed, walkSpeed, walkResetCount
+            ))
+            walkLastWarnTime = now
+        end
+
+        -- 限制每秒最多嘗試恢復約 10 次，避免其他腳本持續覆寫時無限反覆設定。
+        if now - walkLastRestoreTime >= 0.1 then
+            walkLastRestoreTime = now
+            task.defer(function()
+                if walkHumanoid == humanoid and humanoid.Parent
+                    and math.abs(humanoid.WalkSpeed - walkSpeed) >= 0.01 then
+                    humanoid.WalkSpeed = walkSpeed
+                end
+            end)
+        end
+    end)
+end
 
 local function applyWalkSpeed(value)
     local num = tonumber(value)
     if not num or num ~= num or num == math.huge or num == -math.huge then
         return false
     end
+
     walkSpeed = math.max(0, math.floor(num + 0.5))
     local character = LocalPlayer.Character
     local humanoid = character and character:FindFirstChildOfClass("Humanoid")
     if humanoid then
+        if walkHumanoid ~= humanoid then
+            -- 新角色，先掛上監控
+            watchWalkHumanoid(character)
+        end
         humanoid.WalkSpeed = walkSpeed
+        print("[WalkSpeed] 要求設定：", walkSpeed, " / 目前實際屬性：", humanoid.WalkSpeed)
     end
     return true
 end
 
--- 重生後沿用目前設定的行走速度
-LocalPlayer.CharacterAdded:Connect(function(character)
-    local humanoid = character:WaitForChild("Humanoid", 10)
-    if humanoid then
-        humanoid.WalkSpeed = walkSpeed
-    end
+walkCharacterConnection = LocalPlayer.CharacterAdded:Connect(function(character)
+    watchWalkHumanoid(character)
+end)
+
+if LocalPlayer.Character then
+    task.defer(watchWalkHumanoid, LocalPlayer.Character)
+end
+
+-- 重新執行這份檔案時，銷毀舊介面會釋放這一版的監控連線。
+ScreenGui.Destroying:Connect(function()
+    if walkWatchConnection then walkWatchConnection:Disconnect() end
+    if walkCharacterConnection then walkCharacterConnection:Disconnect() end
 end)
 
 local ToggleButton = Instance.new("TextButton")
