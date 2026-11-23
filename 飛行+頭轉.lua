@@ -535,29 +535,22 @@ ScreenGui.Destroying:Connect(function()
     diagnosticConnection:Disconnect()
 end)
 
--- ===== R6 血量顯示：玩家身旁直立血條 + HP 數字 + 頭頂名稱 =====
--- 以 R6 頭部、腿部的實際螢幕投影決定血條高度。
--- 遠處玩家變小時，血條也跟著變小；不會出現人小、血條反而很大的情形。
+-- ===== 敵方玩家 HP 可視化（使用實際複製到客戶端的 Humanoid.Health） =====
+-- 本機顯示用，不會修改敵方血量；無可讀 Humanoid 的遊戲可能無法顯示。
 local healthVisible = true
-local healthEnemyOnly = false  -- 預設所有其他玩家，不依 Team 排除
-local healthDisplayDistance = 250 -- 最遠顯示距離 (studs)
-local hpSide = 1                   -- 1 = 玩家畫面右側；-1 = 左側
-local hpSideGap = 6                -- 血條離玩家身體的螢幕間隔 (px)
-local hpBarWidthRatio = 0.070     -- 血條寬 / 人物投影高度
-local hpShowOnlyR6 = false        -- 自己使用 R6 不代表其他玩家是 R6；預設支援兩者
-local hpNameFontLimit = 16        -- 頭頂名字最大字體大小
+local healthEnemyOnly = false -- 預設顯示所有其他玩家，避免無隊伍/同隊時排除
+local healthDisplayDistance = 1500  -- 最遠顯示距離（studs）
+local hpBillboardWidth = 5.4       -- 整個血條 UI 的世界寬度（studs）
+local hpBillboardHeight = 5.8      -- 整個血條 UI 的世界高度（studs）
+local hpWorldVerticalOffset = -2.1 -- 以頭部為基準，向下移動 UI 中心（studs）
+local hpBarRightPosition = 0.83    -- 血條相對 UI 的水平位置，0 到 1
 
--- 獨立的 2D ScreenGui，所有顯示座標都由世界座標投影而來。
-local hpGuiName = "PlayerMarkerFlyLock_HP_Overlays"
-local oldHPGui = UI_PARENT:FindFirstChild(hpGuiName)
-if oldHPGui then oldHPGui:Destroy() end
-local hpScreen = Instance.new("ScreenGui")
-hpScreen.Name = hpGuiName
-hpScreen.ResetOnSpawn = false
-hpScreen.IgnoreGuiInset = true
-hpScreen.DisplayOrder = 1
-hpScreen.Parent = UI_PARENT
-ScreenGui.DisplayOrder = 3
+local hpGuiFolderName = "PlayerMarkerFlyLock_HP_Overlays"
+local oldHPFolder = UI_PARENT:FindFirstChild(hpGuiFolderName)
+if oldHPFolder then oldHPFolder:Destroy() end
+local hpGuiFolder = Instance.new("Folder")
+hpGuiFolder.Name = hpGuiFolderName
+hpGuiFolder.Parent = UI_PARENT
 
 local HealthFrame = Instance.new("Frame")
 HealthFrame.Name = "EnemyHealthControls"
@@ -569,10 +562,10 @@ HealthFrame.Parent = MainFrame
 addCorner(HealthFrame, 8)
 
 local HealthTitle = Instance.new("TextLabel")
-HealthTitle.Size = UDim2.new(0, 86, 1, 0)
+HealthTitle.Size = UDim2.new(0, 84, 1, 0)
 HealthTitle.Position = UDim2.new(0, 8, 0, 0)
 HealthTitle.BackgroundTransparency = 1
-HealthTitle.Text = "敵人血量"
+HealthTitle.Text = "直立血條"
 HealthTitle.TextColor3 = Color3.fromRGB(235, 235, 235)
 HealthTitle.TextSize = 14
 HealthTitle.Font = Enum.Font.SourceSansBold
@@ -580,6 +573,7 @@ HealthTitle.TextXAlignment = Enum.TextXAlignment.Left
 HealthTitle.Parent = HealthFrame
 
 local HealthToggle = Instance.new("TextButton")
+HealthToggle.Name = "HealthToggle"
 HealthToggle.Size = UDim2.new(0, 76, 0, 27)
 HealthToggle.Position = UDim2.new(0, 95, 0, 5)
 HealthToggle.BackgroundColor3 = Color3.fromRGB(52, 104, 63)
@@ -591,6 +585,7 @@ HealthToggle.Parent = HealthFrame
 addCorner(HealthToggle, 6)
 
 local HealthMode = Instance.new("TextButton")
+HealthMode.Name = "HealthMode"
 HealthMode.Size = UDim2.new(0, 73, 0, 27)
 HealthMode.Position = UDim2.new(0, 177, 0, 5)
 HealthMode.BackgroundColor3 = Color3.fromRGB(55, 70, 94)
@@ -609,27 +604,24 @@ HealthCount.TextColor3 = Color3.fromRGB(190, 190, 190)
 HealthCount.TextSize = 12
 HealthCount.Font = Enum.Font.SourceSans
 HealthCount.TextXAlignment = Enum.TextXAlignment.Center
-HealthCount.Text = "可見 0/0"
+HealthCount.Text = "血條 0/0"
 HealthCount.Parent = HealthFrame
 
-local hpVisuals = {}
-local hpPlayerConnections = {}
-local hpGlobalConnections = {}
+local hpVisuals = {} -- [Player] = {billboard, connections}
+local hpConnections = {}
 local hpActive = true
 
 local function hpTrack(connection)
-    table.insert(hpGlobalConnections, connection)
+    table.insert(hpConnections, connection)
     return connection
 end
 
-local hpLastVisibleCount = 0
-local function hpUpdateCount(visibleCount)
-    if visibleCount ~= nil then hpLastVisibleCount = visibleCount end
-    local attached = 0
+local function hpUpdateCount()
+    local count = 0
     for _, entry in pairs(hpVisuals) do
-        if entry.barPanel and entry.barPanel.Parent then attached += 1 end
+        if entry.billboard and entry.billboard.Parent then count += 1 end
     end
-    HealthCount.Text = string.format("可見 %d/%d", math.min(hpLastVisibleCount, attached), attached)
+    HealthCount.Text = string.format("血條 %d/%d", count, math.max(0, #Players:GetPlayers() - 1))
 end
 
 local function hpShouldShow(player)
@@ -649,136 +641,110 @@ local function hpRemove(player)
     for _, connection in ipairs(entry.connections) do
         connection:Disconnect()
     end
-    if entry.barPanel then entry.barPanel:Destroy() end
-    if entry.nameLabel then entry.nameLabel:Destroy() end
+    if entry.billboard then entry.billboard:Destroy() end
     hpUpdateCount()
 end
 
 local function hpAttach(player, character)
-    if not hpActive or player.Character ~= character or not hpShouldShow(player) then
-        hpRemove(player)
-        return
-    end
-    local humanoid = character:FindFirstChildOfClass("Humanoid")
-    local head = character:FindFirstChild("Head")
-    local torso = character:FindFirstChild("Torso")
-        or character:FindFirstChild("UpperTorso")
-        or character:FindFirstChild("HumanoidRootPart")
-    local leftLeg = character:FindFirstChild("Left Leg")
-        or character:FindFirstChild("LeftFoot")
-        or character:FindFirstChild("LeftLowerLeg")
-    local rightLeg = character:FindFirstChild("Right Leg")
-        or character:FindFirstChild("RightFoot")
-        or character:FindFirstChild("RightLowerLeg")
-    -- 角色尚未載入完成時，不要刪除既有血條，下一次維護會重試。
-    if not humanoid or not head or not torso then return end
-    if hpShowOnlyR6 and humanoid.RigType ~= Enum.HumanoidRigType.R6 then
-        hpRemove(player)
-        return
-    end
-    local previous = hpVisuals[player]
-    if previous and previous.humanoid == humanoid and previous.head == head
-        and previous.torso == torso then
-        return
-    end
+    local existing = hpVisuals[player]
+    if existing and existing.character == character and existing.billboard and existing.billboard.Parent then return end
     hpRemove(player)
+    if not hpActive or not hpShouldShow(player) or player.Character ~= character then return end
+    local humanoid = character:FindFirstChildOfClass("Humanoid")
+    local head = character:FindFirstChild("Head") or character:FindFirstChild("HumanoidRootPart")
+    if not humanoid or not head then return end
 
-    -- 玩家頭上的名稱：獨立 UI，不會跟血條排在同一框中。
+    -- 使用最初有效的 BillboardGui，避免每一幀投影和多個 R6/R15 過濾條件。
+    -- BillboardGui.Size 使用 Scale 世界單位（studs），所以距離改變時會與角色一起縮放。
+    local billboard = Instance.new("BillboardGui")
+    billboard.Name = "EnemyHealth_" .. tostring(player.UserId)
+    billboard.Size = UDim2.new(hpBillboardWidth, 0, hpBillboardHeight, 0)
+    billboard.StudsOffsetWorldSpace = Vector3.new(0, hpWorldVerticalOffset, 0)
+    billboard.AlwaysOnTop = true
+    billboard.MaxDistance = healthDisplayDistance
+    billboard.Adornee = head
+    billboard.Parent = hpGuiFolder
+
+    -- 頭頂名字
     local nameLabel = Instance.new("TextLabel")
-    nameLabel.Name = "Name_" .. tostring(player.UserId)
+    nameLabel.Name = "PlayerName"
+    nameLabel.AnchorPoint = Vector2.new(0.5, 0)
+    nameLabel.Size = UDim2.new(0.74, 0, 0.15, 0)
+    nameLabel.Position = UDim2.new(0.50, 0, 0.01, 0)
     nameLabel.BackgroundTransparency = 1
     nameLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
-    nameLabel.TextStrokeColor3 = Color3.fromRGB(14, 14, 18)
-    nameLabel.TextStrokeTransparency = 0.20
-    nameLabel.TextTruncate = Enum.TextTruncate.AtEnd
-    nameLabel.TextScaled = false
-    nameLabel.TextSize = 13
+    nameLabel.TextStrokeColor3 = Color3.fromRGB(10, 10, 10)
+    nameLabel.TextStrokeTransparency = 0.15
     nameLabel.Font = Enum.Font.SourceSansBold
+    nameLabel.TextScaled = true
     nameLabel.Text = player.DisplayName
-    nameLabel.AnchorPoint = Vector2.new(0.5, 1)
-    nameLabel.Size = UDim2.fromOffset(130, 20)
-    nameLabel.Visible = false
-    nameLabel.Parent = hpScreen
+    nameLabel.Parent = billboard
+    local fontConstraint = Instance.new("UITextSizeConstraint")
+    fontConstraint.MinTextSize = 1
+    fontConstraint.MaxTextSize = 18
+    fontConstraint.Parent = nameLabel
 
-    -- 血條放在人物右側（hpSide = -1 時改放左側）。
-    local barPanel = Instance.new("Frame")
-    barPanel.Name = "VerticalHP_" .. tostring(player.UserId)
-    barPanel.BackgroundTransparency = 1
-    barPanel.BorderSizePixel = 0
-    barPanel.AnchorPoint = Vector2.new(0, 0)
-    barPanel.Size = UDim2.fromOffset(60, 80)
-    barPanel.Visible = false
-    barPanel.Parent = hpScreen
-
+    -- 角色右側直立 HP 血條，填充方向由下往上
     local barBack = Instance.new("Frame")
-    barBack.Name = "VerticalBackground"
-    barBack.BackgroundColor3 = Color3.fromRGB(25, 29, 32)
+    barBack.Name = "VerticalHPBackground"
+    barBack.Size = UDim2.new(0.055, 0, 0.70, 0)
+    barBack.Position = UDim2.new(hpBarRightPosition, 0, 0.23, 0)
+    barBack.BackgroundColor3 = Color3.fromRGB(27, 29, 34)
     barBack.BorderSizePixel = 0
     barBack.ClipsDescendants = true
-    barBack.Size = UDim2.fromOffset(9, 80)
-    barBack.Position = UDim2.fromOffset(0, 0)
-    barBack.Parent = barPanel
+    barBack.Parent = billboard
     addCorner(barBack, 4)
 
-    local barFill = Instance.new("Frame")
-    barFill.Name = "RemainingHP"
-    barFill.AnchorPoint = Vector2.new(0, 1) -- 從底部往上填充
-    barFill.Position = UDim2.new(0, 0, 1, 0)
-    barFill.Size = UDim2.new(1, 0, 1, 0)
-    barFill.BackgroundColor3 = Color3.fromRGB(55, 214, 95)
-    barFill.BorderSizePixel = 0
-    barFill.Parent = barBack
+    local bar = Instance.new("Frame")
+    bar.Name = "RemainingHP"
+    bar.AnchorPoint = Vector2.new(0, 1)
+    bar.Position = UDim2.new(0, 0, 1, 0)
+    bar.Size = UDim2.new(1, 0, 1, 0)
+    bar.BackgroundColor3 = Color3.fromRGB(55, 214, 95)
+    bar.BorderSizePixel = 0
+    bar.Parent = barBack
 
-    local hpNumber = Instance.new("TextLabel")
-    hpNumber.Name = "HPNumber"
-    hpNumber.BackgroundTransparency = 1
-    hpNumber.TextColor3 = Color3.fromRGB(255, 255, 255)
-    hpNumber.TextStrokeColor3 = Color3.fromRGB(10, 10, 10)
-    hpNumber.TextStrokeTransparency = 0.15
-    hpNumber.TextScaled = false
-    hpNumber.TextSize = 12
-    hpNumber.Font = Enum.Font.SourceSansBold
-    hpNumber.TextXAlignment = Enum.TextXAlignment.Left
-    hpNumber.Size = UDim2.fromOffset(49, 18)
-    hpNumber.Position = UDim2.fromOffset(13, 0)
-    hpNumber.Text = "100 HP"
-    hpNumber.Parent = barPanel
+    -- 直立血條右側顯示剩餘血量
+    local label = Instance.new("TextLabel")
+    label.Name = "HPAmount"
+    label.Size = UDim2.new(0.15, 0, 0.12, 0)
+    label.Position = UDim2.new(hpBarRightPosition + 0.06, 0, 0.23, 0)
+    label.BackgroundTransparency = 1
+    label.TextColor3 = Color3.new(1, 1, 1)
+    label.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
+    label.TextStrokeTransparency = 0.1
+    label.TextXAlignment = Enum.TextXAlignment.Left
+    label.Font = Enum.Font.SourceSansBold
+    label.TextScaled = true
+    label.Parent = billboard
+    local hpFontConstraint = Instance.new("UITextSizeConstraint")
+    hpFontConstraint.MinTextSize = 1
+    hpFontConstraint.MaxTextSize = 16
+    hpFontConstraint.Parent = label
 
-    local entry = {
-        barPanel = barPanel,
-        nameLabel = nameLabel,
-        barBack = barBack,
-        hpNumber = hpNumber,
-        head = head,
-        torso = torso,
-        leftLeg = leftLeg,
-        rightLeg = rightLeg,
-        humanoid = humanoid,
-        connections = {},
-    }
+    local entry = {billboard = billboard, character = character, connections = {}}
     hpVisuals[player] = entry
 
-    local function updateHealth()
+    local function update()
         if not hpActive or hpVisuals[player] ~= entry then return end
         local maximum = math.max(1, humanoid.MaxHealth)
         local amount = math.clamp(humanoid.Health, 0, maximum)
         local ratio = math.clamp(amount / maximum, 0, 1)
-        hpNumber.Text = string.format("%d HP", math.ceil(amount))
-        barFill.Size = UDim2.new(1, 0, ratio, 0)
-        if ratio > 0.50 then
-            barFill.BackgroundColor3 = Color3.fromRGB(55, 214, 95)
+        nameLabel.Text = player.DisplayName
+        label.Text = string.format("%d HP", math.ceil(amount))
+        bar.Size = UDim2.new(1, 0, ratio, 0)
+        if ratio > 0.5 then
+            bar.BackgroundColor3 = Color3.fromRGB(55, 214, 95)
         elseif ratio > 0.25 then
-            barFill.BackgroundColor3 = Color3.fromRGB(243, 189, 50)
+            bar.BackgroundColor3 = Color3.fromRGB(243, 189, 50)
         else
-            barFill.BackgroundColor3 = Color3.fromRGB(234, 68, 63)
+            bar.BackgroundColor3 = Color3.fromRGB(234, 68, 63)
         end
     end
-    table.insert(entry.connections, humanoid.HealthChanged:Connect(updateHealth))
-    table.insert(entry.connections, humanoid:GetPropertyChangedSignal("MaxHealth"):Connect(updateHealth))
-    table.insert(entry.connections, player:GetPropertyChangedSignal("DisplayName"):Connect(function()
-        nameLabel.Text = player.DisplayName
-    end))
-    updateHealth()
+
+    table.insert(entry.connections, humanoid.HealthChanged:Connect(update))
+    table.insert(entry.connections, humanoid:GetPropertyChangedSignal("MaxHealth"):Connect(update))
+    update()
     hpUpdateCount()
 end
 
@@ -786,45 +752,35 @@ local function hpRefresh()
     for player in pairs(hpVisuals) do hpRemove(player) end
     if not healthVisible then return end
     for _, player in ipairs(Players:GetPlayers()) do
-        if player ~= LocalPlayer and player.Character then
-            hpAttach(player, player.Character)
+        if player ~= LocalPlayer then
+            local character = player.Character
+            if character then hpAttach(player, character) end
         end
     end
 end
 
 local function hpWatchPlayer(player)
-    if player == LocalPlayer or hpPlayerConnections[player] then return end
-    local connections = {}
-    hpPlayerConnections[player] = connections
-    local function watchCharacter(character)
+    if player == LocalPlayer then return end
+    hpTrack(player.CharacterAdded:Connect(function(character)
         task.spawn(function()
-            local humanoid = character:WaitForChild("Humanoid", 12)
-            local head = character:WaitForChild("Head", 12)
-            if not humanoid or not head then return end
-            if hpShowOnlyR6 and humanoid.RigType ~= Enum.HumanoidRigType.R6 then return end
-            local torso = character:FindFirstChild("Torso")
-                or character:FindFirstChild("UpperTorso")
-                or character:FindFirstChild("HumanoidRootPart")
-                or character:WaitForChild("HumanoidRootPart", 12)
-            if torso and hpActive and player.Character == character then
-                hpAttach(player, character)
-            end
+            local h = character:WaitForChild("Humanoid", 8)
+            local head = character:WaitForChild("Head", 8)
+            if h and head and hpActive then hpAttach(player, character) end
         end)
-    end
-    table.insert(connections, player.CharacterAdded:Connect(watchCharacter))
-    table.insert(connections, player.CharacterRemoving:Connect(function()
+    end))
+    hpTrack(player.CharacterRemoving:Connect(function()
         hpRemove(player)
     end))
-    table.insert(connections, player:GetPropertyChangedSignal("Team"):Connect(hpRefresh))
-    table.insert(connections, player:GetPropertyChangedSignal("Neutral"):Connect(hpRefresh))
-    if player.Character then watchCharacter(player.Character) end
+    hpTrack(player:GetPropertyChangedSignal("Team"):Connect(hpRefresh))
+    hpTrack(player:GetPropertyChangedSignal("Neutral"):Connect(hpRefresh))
+    if player.Character then hpAttach(player, player.Character) end
 end
 
 HealthToggle.MouseButton1Click:Connect(function()
     healthVisible = not healthVisible
     HealthToggle.Text = healthVisible and "顯示：開" or "顯示：關"
-    HealthToggle.BackgroundColor3 = healthVisible
-        and Color3.fromRGB(52, 104, 63) or Color3.fromRGB(99, 58, 58)
+    HealthToggle.BackgroundColor3 = healthVisible and Color3.fromRGB(52, 104, 63)
+        or Color3.fromRGB(99, 58, 58)
     hpRefresh()
 end)
 
@@ -837,113 +793,34 @@ end)
 hpTrack(LocalPlayer:GetPropertyChangedSignal("Team"):Connect(hpRefresh))
 hpTrack(LocalPlayer:GetPropertyChangedSignal("Neutral"):Connect(hpRefresh))
 hpTrack(Players.PlayerAdded:Connect(hpWatchPlayer))
-hpTrack(Players.PlayerRemoving:Connect(function(player)
-    hpRemove(player)
-    local connections = hpPlayerConnections[player]
-    if connections then
-        for _, connection in ipairs(connections) do connection:Disconnect() end
-        hpPlayerConnections[player] = nil
-    end
-end))
+hpTrack(Players.PlayerRemoving:Connect(hpRemove))
 for _, player in ipairs(Players:GetPlayers()) do hpWatchPlayer(player) end
 
--- 自動補抓已在線、晚載入及串流進入範圍的角色。
--- 只在沒有血條時嘗試建立，避免重複製作 UI 或反覆清除。
+-- 定時補抓晚載入的角色：只有未建立血條時才嘗試，不重畫正常血條。
 task.spawn(function()
     while hpActive do
-        for _, player in ipairs(Players:GetPlayers()) do
-            if player ~= LocalPlayer then
-                local character = player.Character
-                local existing = hpVisuals[player]
-                if not hpShouldShow(player) then
-                    if existing then hpRemove(player) end
-                elseif character and (not existing or existing.humanoid.Parent ~= character) then
-                    hpAttach(player, character)
-                elseif not character and existing then
-                    hpRemove(player)
+        if healthVisible then
+            for _, player in ipairs(Players:GetPlayers()) do
+                if player ~= LocalPlayer then
+                    local existing = hpVisuals[player]
+                    if hpShouldShow(player) and player.Character and
+                       (not existing or existing.character ~= player.Character or
+                        not existing.billboard or not existing.billboard.Parent) then
+                        hpAttach(player, player.Character)
+                    end
                 end
             end
         end
-        task.wait(1.5)
+        task.wait(2)
     end
 end)
 
--- 人物頭頂到雙腳的投影高度決定血條高度；R6、R15 都使用相同比例。
-local hpRenderConnection = RunService.RenderStepped:Connect(function()
-    if not hpActive then return end
-    local camera = workspace.CurrentCamera
-    if not camera then return end
-    local ownRoot = getRootPart(LocalPlayer)
-    local eyePosition = (ownRoot and ownRoot.Position) or camera.CFrame.Position
-    local nowVisible = 0
-    for player, entry in pairs(hpVisuals) do
-        local panel, name = entry.barPanel, entry.nameLabel
-        local head, torso = entry.head, entry.torso
-        local humanoid = entry.humanoid
-        if not healthVisible or not panel or not name or not head or not head.Parent
-            or not torso or not torso.Parent or not humanoid or humanoid.Health <= 0 then
-            if panel then panel.Visible = false end
-            if name then name.Visible = false end
-        else
-            local topWorld = head.Position + Vector3.new(0, head.Size.Y * 0.5, 0)
-            local leg = (entry.leftLeg and entry.leftLeg.Parent and entry.leftLeg)
-                or (entry.rightLeg and entry.rightLeg.Parent and entry.rightLeg)
-            local feetWorld
-            if leg then
-                feetWorld = leg.Position - Vector3.new(0, leg.Size.Y * 0.5, 0)
-            else
-                feetWorld = torso.Position - Vector3.new(0, 3, 0)
-            end
-
-            local topPoint, topVisible = camera:WorldToViewportPoint(topWorld)
-            local bottomPoint = camera:WorldToViewportPoint(feetWorld)
-            local torsoPoint = camera:WorldToViewportPoint(torso.Position)
-            local distance = (eyePosition - torso.Position).Magnitude
-            local figureHeight = math.abs(bottomPoint.Y - topPoint.Y)
-
-            if topVisible and topPoint.Z > 0 and bottomPoint.Z > 0
-                and distance <= healthDisplayDistance and figureHeight >= 16 then
-                -- 不採用固定高度：血條與該名 R6 玩家在畫面的高度相同。
-                local topY = math.min(topPoint.Y, bottomPoint.Y)
-                local barHeight = math.floor(figureHeight + 0.5)
-                local barWidth = math.clamp(math.floor(figureHeight * hpBarWidthRatio + 0.5), 4, 13)
-                local playerHalfWidth = figureHeight * 0.22
-                local barX = torsoPoint.X + (playerHalfWidth + hpSideGap) * hpSide
-                if hpSide < 0 then barX -= (barWidth + 51) end
-                panel.Position = UDim2.fromOffset(math.floor(barX + 0.5), math.floor(topY + 0.5))
-                panel.Size = UDim2.fromOffset(barWidth + 53, barHeight)
-                entry.barBack.Size = UDim2.fromOffset(barWidth, barHeight)
-                entry.hpNumber.Position = UDim2.fromOffset(barWidth + 5, 0)
-                entry.hpNumber.TextSize = math.clamp(math.floor(figureHeight * 0.16), 9, 13)
-                panel.Visible = true
-                nowVisible += 1
-
-                local fontSize = math.clamp(math.floor(figureHeight * 0.16), 9, hpNameFontLimit)
-                name.TextSize = fontSize
-                name.Size = UDim2.fromOffset(math.clamp(math.floor(figureHeight * 1.75), 65, 175), fontSize + 5)
-                name.Position = UDim2.fromOffset(math.floor(topPoint.X + 0.5), math.floor(topY - 5))
-                name.Visible = true
-            else
-                panel.Visible = false
-                name.Visible = false
-            end
-        end
-    end
-    if nowVisible ~= hpLastVisibleCount then
-        hpUpdateCount(nowVisible)
-    end
-end)
 
 ScreenGui.Destroying:Connect(function()
     hpActive = false
-    hpRenderConnection:Disconnect()
-    for _, connection in ipairs(hpGlobalConnections) do connection:Disconnect() end
-    for player, connections in pairs(hpPlayerConnections) do
-        for _, connection in ipairs(connections) do connection:Disconnect() end
-        hpPlayerConnections[player] = nil
-    end
+    for _, connection in ipairs(hpConnections) do connection:Disconnect() end
     for player in pairs(hpVisuals) do hpRemove(player) end
-    if hpScreen then hpScreen:Destroy() end
+    hpGuiFolder:Destroy()
 end)
 
 local StatusLabel = Instance.new("TextLabel")
