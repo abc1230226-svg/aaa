@@ -517,7 +517,7 @@ ToggleButton.Parent = ScreenGui
 addCorner(ToggleButton, 8)
 
 local MainFrame = Instance.new("Frame")
-MainFrame.Size = UDim2.new(0, 360, 0, 430)
+MainFrame.Size = UDim2.new(0, 360, 0, 500)
 MainFrame.Position = UDim2.new(0, 100, 0, 100)
 MainFrame.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
 MainFrame.BackgroundTransparency = 0.08
@@ -1033,6 +1033,241 @@ ScreenGui.Destroying:Connect(function()
     fireStatusConnection:Disconnect()
 end)
 
+-- ===== 敵方玩家 HP 可視化（使用實際複製到客戶端的 Humanoid.Health） =====
+-- 本機顯示用，不會修改敵方血量；無可讀 Humanoid 的遊戲可能無法顯示。
+local healthVisible = true
+local healthEnemyOnly = true  -- true = 只顯示敵隊；沒有隊伍的遊戲顯示其他所有玩家
+local healthDisplayDistance = 250
+local hpGuiFolderName = "PlayerMarkerFlyLock_HP_Overlays"
+local oldHPFolder = UI_PARENT:FindFirstChild(hpGuiFolderName)
+if oldHPFolder then oldHPFolder:Destroy() end
+local hpGuiFolder = Instance.new("Folder")
+hpGuiFolder.Name = hpGuiFolderName
+hpGuiFolder.Parent = UI_PARENT
+
+local HealthFrame = Instance.new("Frame")
+HealthFrame.Name = "EnemyHealthControls"
+HealthFrame.Size = UDim2.new(1, -12, 0, 38)
+HealthFrame.Position = UDim2.new(0, 6, 0, 271)
+HealthFrame.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+HealthFrame.BorderSizePixel = 0
+HealthFrame.Parent = MainFrame
+addCorner(HealthFrame, 8)
+
+local HealthTitle = Instance.new("TextLabel")
+HealthTitle.Size = UDim2.new(0, 84, 1, 0)
+HealthTitle.Position = UDim2.new(0, 8, 0, 0)
+HealthTitle.BackgroundTransparency = 1
+HealthTitle.Text = "敵人血量"
+HealthTitle.TextColor3 = Color3.fromRGB(235, 235, 235)
+HealthTitle.TextSize = 14
+HealthTitle.Font = Enum.Font.SourceSansBold
+HealthTitle.TextXAlignment = Enum.TextXAlignment.Left
+HealthTitle.Parent = HealthFrame
+
+local HealthToggle = Instance.new("TextButton")
+HealthToggle.Name = "HealthToggle"
+HealthToggle.Size = UDim2.new(0, 76, 0, 27)
+HealthToggle.Position = UDim2.new(0, 95, 0, 5)
+HealthToggle.BackgroundColor3 = Color3.fromRGB(52, 104, 63)
+HealthToggle.TextColor3 = Color3.new(1, 1, 1)
+HealthToggle.TextSize = 13
+HealthToggle.Font = Enum.Font.SourceSansBold
+HealthToggle.Text = "顯示：開"
+HealthToggle.Parent = HealthFrame
+addCorner(HealthToggle, 6)
+
+local HealthMode = Instance.new("TextButton")
+HealthMode.Name = "HealthMode"
+HealthMode.Size = UDim2.new(0, 73, 0, 27)
+HealthMode.Position = UDim2.new(0, 177, 0, 5)
+HealthMode.BackgroundColor3 = Color3.fromRGB(55, 70, 94)
+HealthMode.TextColor3 = Color3.new(1, 1, 1)
+HealthMode.TextSize = 13
+HealthMode.Font = Enum.Font.SourceSansBold
+HealthMode.Text = "只看敵隊"
+HealthMode.Parent = HealthFrame
+addCorner(HealthMode, 6)
+
+local HealthCount = Instance.new("TextLabel")
+HealthCount.Size = UDim2.new(1, -257, 1, 0)
+HealthCount.Position = UDim2.new(0, 255, 0, 0)
+HealthCount.BackgroundTransparency = 1
+HealthCount.TextColor3 = Color3.fromRGB(190, 190, 190)
+HealthCount.TextSize = 12
+HealthCount.Font = Enum.Font.SourceSans
+HealthCount.TextXAlignment = Enum.TextXAlignment.Center
+HealthCount.Text = "0 個血條"
+HealthCount.Parent = HealthFrame
+
+local hpVisuals = {} -- [Player] = {billboard, connections}
+local hpConnections = {}
+local hpActive = true
+
+local function hpTrack(connection)
+    table.insert(hpConnections, connection)
+    return connection
+end
+
+local function hpUpdateCount()
+    local count = 0
+    for _, entry in pairs(hpVisuals) do
+        if entry.billboard and entry.billboard.Parent then count += 1 end
+    end
+    HealthCount.Text = tostring(count) .. " 個血條"
+end
+
+local function hpShouldShow(player)
+    if not healthVisible or player == LocalPlayer then return false end
+    if healthEnemyOnly and LocalPlayer.Team ~= nil and player.Team ~= nil
+        and not LocalPlayer.Neutral and not player.Neutral
+        and LocalPlayer.Team == player.Team then
+        return false
+    end
+    return true
+end
+
+local function hpRemove(player)
+    local entry = hpVisuals[player]
+    if not entry then return end
+    hpVisuals[player] = nil
+    for _, connection in ipairs(entry.connections) do
+        connection:Disconnect()
+    end
+    if entry.billboard then entry.billboard:Destroy() end
+    hpUpdateCount()
+end
+
+local function hpAttach(player, character)
+    hpRemove(player)
+    if not hpActive or not hpShouldShow(player) or player.Character ~= character then return end
+    local humanoid = character:FindFirstChildOfClass("Humanoid")
+    local head = character:FindFirstChild("Head") or character:FindFirstChild("HumanoidRootPart")
+    if not humanoid or not head then return end
+
+    local billboard = Instance.new("BillboardGui")
+    billboard.Name = "EnemyHealth_" .. player.UserId
+    billboard.Size = UDim2.new(0, 145, 0, 47)
+    billboard.StudsOffsetWorldSpace = Vector3.new(0, 2.7, 0)
+    billboard.AlwaysOnTop = true
+    billboard.MaxDistance = healthDisplayDistance
+    billboard.Adornee = head
+    billboard.Parent = hpGuiFolder
+
+    local background = Instance.new("Frame")
+    background.Size = UDim2.new(1, 0, 1, 0)
+    background.BackgroundColor3 = Color3.fromRGB(14, 17, 22)
+    background.BackgroundTransparency = 0.2
+    background.BorderSizePixel = 0
+    background.Parent = billboard
+    addCorner(background, 6)
+
+    local label = Instance.new("TextLabel")
+    label.Size = UDim2.new(1, -8, 0, 29)
+    label.Position = UDim2.new(0, 4, 0, 1)
+    label.BackgroundTransparency = 1
+    label.TextSize = 13
+    label.Font = Enum.Font.SourceSansBold
+    label.TextStrokeTransparency = 0.5
+    label.TextXAlignment = Enum.TextXAlignment.Center
+    label.TextColor3 = Color3.new(1, 1, 1)
+    label.Parent = background
+
+    local barBack = Instance.new("Frame")
+    barBack.Size = UDim2.new(1, -10, 0, 8)
+    barBack.Position = UDim2.new(0, 5, 1, -13)
+    barBack.BackgroundColor3 = Color3.fromRGB(74, 75, 76)
+    barBack.BorderSizePixel = 0
+    barBack.Parent = background
+    addCorner(barBack, 4)
+
+    local bar = Instance.new("Frame")
+    bar.Size = UDim2.new(1, 0, 1, 0)
+    bar.BackgroundColor3 = Color3.fromRGB(55, 214, 95)
+    bar.BorderSizePixel = 0
+    bar.Parent = barBack
+    addCorner(bar, 4)
+
+    local entry = {billboard = billboard, connections = {}}
+    hpVisuals[player] = entry
+
+    local function update()
+        if not hpActive or hpVisuals[player] ~= entry then return end
+        local maximum = math.max(1, humanoid.MaxHealth)
+        local amount = math.clamp(humanoid.Health, 0, maximum)
+        local ratio = math.clamp(amount / maximum, 0, 1)
+        label.Text = string.format("%s  %d/%d HP", player.DisplayName, math.ceil(amount), math.ceil(maximum))
+        bar.Size = UDim2.new(ratio, 0, 1, 0)
+        if ratio > 0.5 then
+            bar.BackgroundColor3 = Color3.fromRGB(55, 214, 95)
+        elseif ratio > 0.25 then
+            bar.BackgroundColor3 = Color3.fromRGB(243, 189, 50)
+        else
+            bar.BackgroundColor3 = Color3.fromRGB(234, 68, 63)
+        end
+    end
+
+    table.insert(entry.connections, humanoid.HealthChanged:Connect(update))
+    table.insert(entry.connections, humanoid:GetPropertyChangedSignal("MaxHealth"):Connect(update))
+    update()
+    hpUpdateCount()
+end
+
+local function hpRefresh()
+    for player in pairs(hpVisuals) do hpRemove(player) end
+    if not healthVisible then return end
+    for _, player in ipairs(Players:GetPlayers()) do
+        if player ~= LocalPlayer then
+            local character = player.Character
+            if character then hpAttach(player, character) end
+        end
+    end
+end
+
+local function hpWatchPlayer(player)
+    if player == LocalPlayer then return end
+    hpTrack(player.CharacterAdded:Connect(function(character)
+        task.spawn(function()
+            local h = character:WaitForChild("Humanoid", 8)
+            local head = character:WaitForChild("Head", 8)
+            if h and head and hpActive then hpAttach(player, character) end
+        end)
+    end))
+    hpTrack(player.CharacterRemoving:Connect(function()
+        hpRemove(player)
+    end))
+    hpTrack(player:GetPropertyChangedSignal("Team"):Connect(hpRefresh))
+    hpTrack(player:GetPropertyChangedSignal("Neutral"):Connect(hpRefresh))
+    if player.Character then hpAttach(player, player.Character) end
+end
+
+HealthToggle.MouseButton1Click:Connect(function()
+    healthVisible = not healthVisible
+    HealthToggle.Text = healthVisible and "顯示：開" or "顯示：關"
+    HealthToggle.BackgroundColor3 = healthVisible and Color3.fromRGB(52, 104, 63)
+        or Color3.fromRGB(99, 58, 58)
+    hpRefresh()
+end)
+
+HealthMode.MouseButton1Click:Connect(function()
+    healthEnemyOnly = not healthEnemyOnly
+    HealthMode.Text = healthEnemyOnly and "只看敵隊" or "所有玩家"
+    hpRefresh()
+end)
+
+hpTrack(LocalPlayer:GetPropertyChangedSignal("Team"):Connect(hpRefresh))
+hpTrack(LocalPlayer:GetPropertyChangedSignal("Neutral"):Connect(hpRefresh))
+hpTrack(Players.PlayerAdded:Connect(hpWatchPlayer))
+hpTrack(Players.PlayerRemoving:Connect(hpRemove))
+for _, player in ipairs(Players:GetPlayers()) do hpWatchPlayer(player) end
+
+ScreenGui.Destroying:Connect(function()
+    hpActive = false
+    for _, connection in ipairs(hpConnections) do connection:Disconnect() end
+    for player in pairs(hpVisuals) do hpRemove(player) end
+    hpGuiFolder:Destroy()
+end)
+
 local StatusLabel = Instance.new("TextLabel")
 StatusLabel.Size = UDim2.new(1, -12, 0, 26)
 StatusLabel.Position = UDim2.new(0, 6, 1, -32)
@@ -1044,8 +1279,8 @@ StatusLabel.Text = "選擇一個玩家"
 StatusLabel.Parent = MainFrame
 
 local PlayerList = Instance.new("ScrollingFrame")
-PlayerList.Size = UDim2.new(1, -12, 1, -314)
-PlayerList.Position = UDim2.new(0, 6, 0, 278)
+PlayerList.Size = UDim2.new(1, -12, 1, -354)
+PlayerList.Position = UDim2.new(0, 6, 0, 318)
 PlayerList.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
 PlayerList.BorderSizePixel = 0
 
