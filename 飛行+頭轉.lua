@@ -1,3 +1,5 @@
+-- 版本：以 fly to people (1).lua 為底稿，新增原生 Animator 動畫測試。
+-- 不改動原本的飛行/TP/玩家列表/捲動機制。
 local Players = game:GetService("Players")
 local UserInputService = game:GetService("UserInputService")
 local RunService = game:GetService("RunService")
@@ -208,9 +210,6 @@ StatusLabel.TextColor3 = Color3.fromRGB(200, 200, 200)
 StatusLabel.TextSize = 13
 StatusLabel.Font = Enum.Font.SourceSans
 StatusLabel.Text = "選擇一個玩家"
-StatusLabel.TextXAlignment = Enum.TextXAlignment.Left
-StatusLabel.TextTruncate = Enum.TextTruncate.AtEnd
-StatusLabel.Size = UDim2.new(1, -142, 0, 26)
 StatusLabel.Parent = MainFrame
 
 local PlayerList = Instance.new("ScrollingFrame")
@@ -243,289 +242,137 @@ UIPadding.PaddingBottom = UDim.new(0, 6)
 UIPadding.Parent = PlayerList
 
 
--- 新增：四肢繞頭（用戶端外觀；若遊戲安裝配套伺服器程式則會同步其他玩家）
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local orbitRadius = 1.8          -- 四肢繞頭半徑（studs）
-local orbitSpeed = 1080         -- 繞頭速度（度／秒）
-local orbitWobble = 0.75        -- 上下亂繞的幅度
-local limbSelfSpin = 1440       -- 四肢自轉速度（度／秒）
+-- ===== 原生 Animator 動畫（無需新增伺服器 Script） =====
+-- 注意：內建 ID 是「舞蹈測試」，不是四肢拆開繞頭的專用動畫。
+-- 如果你有自行發布且此遊戲有權限使用的特殊動畫，把 ID 填入 CUSTOM_ANIMATION_ID。
+local CUSTOM_ANIMATION_ID = ""         -- 例："rbxassetid://1234567890"
+local R15_TEST_ANIMATION = "rbxassetid://507771019"  -- Roblox R15 內建舞蹈
+local R6_TEST_ANIMATION = "rbxassetid://182435998"   -- Roblox R6 內建舞蹈
+local SYNC_ANIMATION_SPEED = 2.5         -- 倍速，不是「每秒幾圈」
 
-local OrbitButton = Instance.new("TextButton")
-OrbitButton.Name = "LimbOrbitToggle"
-OrbitButton.Size = UDim2.new(0, 124, 0, 26)
-OrbitButton.Position = UDim2.new(1, -130, 1, -32)
-OrbitButton.BackgroundColor3 = Color3.fromRGB(70, 70, 95)
-OrbitButton.TextColor3 = Color3.new(1, 1, 1)
-OrbitButton.TextSize = 12
-OrbitButton.Font = Enum.Font.SourceSansBold
-OrbitButton.Text = "四肢繞頭：關"
-OrbitButton.Parent = MainFrame
-addCorner(OrbitButton, 6)
+-- 主介面底部增加一個按鈕，讓左側狀態文字保留空間。
+StatusLabel.Size = UDim2.new(1, -145, 0, 26)
+StatusLabel.TextXAlignment = Enum.TextXAlignment.Left
+StatusLabel.TextTruncate = Enum.TextTruncate.AtEnd
 
--- ===== 四肢圍繞頭部的視覺效果（R6 / R15） =====
--- 與物理角色分開：克隆手腳來旋轉，原始關節完全不拆除。
-local LIMB_GROUPS = {
-    {"LeftUpperArm", "LeftLowerArm", "LeftHand"},
-    {"RightUpperArm", "RightLowerArm", "RightHand"},
-    {"LeftUpperLeg", "LeftLowerLeg", "LeftFoot"},
-    {"RightUpperLeg", "RightLowerLeg", "RightFoot"},
-}
-local LIMB_GROUPS_R6 = {
-    {"Left Arm"},
-    {"Right Arm"},
-    {"Left Leg"},
-    {"Right Leg"},
-}
+local SyncAnimButton = Instance.new("TextButton")
+SyncAnimButton.Name = "NativeAnimationToggle"
+SyncAnimButton.Size = UDim2.new(0, 126, 0, 26)
+SyncAnimButton.Position = UDim2.new(1, -132, 1, -32)
+SyncAnimButton.BackgroundColor3 = Color3.fromRGB(65, 65, 100)
+SyncAnimButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+SyncAnimButton.TextSize = 12
+SyncAnimButton.Font = Enum.Font.SourceSansBold
+SyncAnimButton.Text = "原生動畫：關"
+SyncAnimButton.Parent = MainFrame
+addCorner(SyncAnimButton, 6)
 
-local function makeOrbitVisual(original)
-    local previousArchivable = original.Archivable
-    original.Archivable = true
-    local ok, clone = pcall(function() return original:Clone() end)
-    original.Archivable = previousArchivable
-    if not ok or not clone then
-        clone = Instance.new("Part")
-        clone.Size = original.Size
-        clone.Color = original.Color
-        clone.Material = original.Material
+local currentAnimationTrack = nil
+local currentAnimationObject = nil
+local currentAnimationCharacter = nil
+local animationEnabled = false
+
+local function stopNativeAnimation()
+    animationEnabled = false
+    if currentAnimationTrack then
+        pcall(function() currentAnimationTrack:Stop(0.15) end)
+        pcall(function() currentAnimationTrack:Destroy() end)
+        currentAnimationTrack = nil
     end
-    -- 不複製關節、碰撞與執行程式。
-    for _, child in ipairs(clone:GetDescendants()) do
-        if child:IsA("JointInstance") or child:IsA("Constraint")
-            or child:IsA("Script") or child:IsA("LocalScript")
-            or child:IsA("ModuleScript") or child:IsA("BodyMover")
-            or child:IsA("Sound") then
-            child:Destroy()
-        end
+    if currentAnimationObject then
+        currentAnimationObject:Destroy()
+        currentAnimationObject = nil
     end
-    clone.Name = "Orbit_" .. original.Name
-    clone.Anchored = true
-    clone.CanCollide = false
-    clone.CanTouch = false
-    clone.CanQuery = false
-    clone.CastShadow = false
-    clone.Massless = true
-    clone.LocalTransparencyModifier = 0
-    return clone
+    currentAnimationCharacter = nil
+    SyncAnimButton.Text = "原生動畫：關"
+    SyncAnimButton.BackgroundColor3 = Color3.fromRGB(65, 65, 100)
 end
 
-local function orbitPose(headCF, groupIndex, elapsed, radius, speedDegrees, wobble, selfSpinDegrees)
-    local phase = (groupIndex - 1) * (math.pi / 2)
-    local direction = (groupIndex % 2 == 0) and -1 or 1
-    local angle = phase + math.rad(speedDegrees) * elapsed * direction * (0.84 + groupIndex * 0.055)
-    local varyingRadius = radius + 0.25 * math.sin(elapsed * 5.3 + phase)
-    local x = math.cos(angle) * varyingRadius
-    local y = math.sin(angle * 1.27 + phase) * wobble
-    local z = math.sin(angle) * varyingRadius
-    local twist = math.rad(selfSpinDegrees) * elapsed * (groupIndex % 2 == 0 and 1 or -1)
-    return headCF * CFrame.new(x, y, z)
-        * CFrame.Angles(twist * 0.65, twist, twist * 0.39)
-end
-
--- 每組由 1 個（R6）或 3 個（R15）肢體零件組成。
-local function constructOrbit(character, parentFolder, hideLocally)
-    local head = character:FindFirstChild("Head")
-    if not head or not head:IsA("BasePart") then return nil end
-
-    local names = character:FindFirstChild("LeftUpperArm") and LIMB_GROUPS or LIMB_GROUPS_R6
-    local data = {character=character, head=head, folder=parentFolder, groups={}, hidden={}}
-
-    for index, limbNames in ipairs(names) do
-        local originalParts = {}
-        for _, name in ipairs(limbNames) do
-            local part = character:FindFirstChild(name)
-            if part and part:IsA("BasePart") then
-                table.insert(originalParts, part)
-            end
-        end
-        if #originalParts > 0 then
-            local firstCF = originalParts[1].CFrame
-            local group = {index=index, segments={}}
-            for _, original in ipairs(originalParts) do
-                local clone = makeOrbitVisual(original)
-                clone.CFrame = original.CFrame
-                clone.Parent = parentFolder
-                table.insert(group.segments, {
-                    part = clone,
-                    relative = firstCF:ToObjectSpace(original.CFrame)
-                })
-                if data.hidden[original] == nil then
-                    data.hidden[original] = hideLocally
-                        and original.LocalTransparencyModifier or original.Transparency
-                    if hideLocally then
-                        original.LocalTransparencyModifier = 1
-                    else
-                        original.Transparency = 1
-                    end
-                end
-            end
-            table.insert(data.groups, group)
-        end
-    end
-
-    -- 身體在視覺上消失，留下中央的頭與繞頭的四肢。
-    for _, name in ipairs({"Torso", "UpperTorso", "LowerTorso"}) do
-        local part = character:FindFirstChild(name)
-        if part and part:IsA("BasePart") and data.hidden[part] == nil then
-            data.hidden[part] = hideLocally
-                and part.LocalTransparencyModifier or part.Transparency
-            if hideLocally then
-                part.LocalTransparencyModifier = 1
-            else
-                part.Transparency = 1
-            end
-        end
-    end
-
-    if #data.groups == 0 then
-        for part, oldValue in pairs(data.hidden) do
-            if part and part.Parent then
-                if hideLocally then
-                    part.LocalTransparencyModifier = oldValue
-                else
-                    part.Transparency = oldValue
-                end
-            end
-        end
-        return nil
-    end
-    return data
-end
-
-local function renderOrbit(data, elapsed, radius, speedDegrees, wobble, selfSpinDegrees)
-    if not data or not data.head or not data.head.Parent then return false end
-    local headCF = data.head.CFrame
-    for _, group in ipairs(data.groups) do
-        local pivot = orbitPose(headCF, group.index, elapsed, radius, speedDegrees, wobble, selfSpinDegrees)
-        for _, segment in ipairs(group.segments) do
-            if segment.part.Parent then
-                segment.part.CFrame = pivot * segment.relative
-            end
-        end
-    end
-    return true
-end
-
-local function destroyOrbit(data, hideLocally)
-    if not data then return end
-    for part, oldValue in pairs(data.hidden) do
-        if part and part.Parent then
-            if hideLocally then
-                part.LocalTransparencyModifier = oldValue
-            else
-                part.Transparency = oldValue
-            end
-        end
-    end
-    if data.folder then data.folder:Destroy() end
-end
-
-local orbitEnabled = false
-local orbitConnection = nil
-local orbitData = nil
-local orbitElapsed = 0
-local usingServerOrbit = false
-
-local function showOrbitState(enabled)
-    OrbitButton.Text = enabled and "四肢繞頭：開" or "四肢繞頭：關"
-    OrbitButton.BackgroundColor3 = enabled
-        and Color3.fromRGB(50, 125, 75)
-        or Color3.fromRGB(70, 70, 95)
-end
-
-local function stopLocalOrbit()
-    if orbitConnection then
-        orbitConnection:Disconnect()
-        orbitConnection = nil
-    end
-    destroyOrbit(orbitData, true)
-    orbitData = nil
-end
-
-local function attachLocalOrbit(character)
-    destroyOrbit(orbitData, true)
-    orbitData = nil
-    if not character or not character:FindFirstChild("Head") then return false end
-    local folder = Instance.new("Folder")
-    folder.Name = "LocalLimbOrbitVisuals"
-    folder.Parent = workspace
-    orbitData = constructOrbit(character, folder, true)
-    if not orbitData then
-        folder:Destroy()
-        return false
-    end
-    return true
-end
-
-local function startLocalOrbit()
-    if orbitConnection then return true end
-    if not attachLocalOrbit(LocalPlayer.Character) then
-        StatusLabel.Text = "找不到四肢；請確認角色已載入"
-        return false
-    end
-    orbitElapsed = 0
-    orbitConnection = RunService.RenderStepped:Connect(function(dt)
-        if not orbitEnabled then return end
-        if not orbitData or LocalPlayer.Character ~= orbitData.character then
-            if not attachLocalOrbit(LocalPlayer.Character) then return end
-        end
-        orbitElapsed += math.min(dt, 0.1)
-        renderOrbit(orbitData, orbitElapsed, orbitRadius, orbitSpeed, orbitWobble, limbSelfSpin)
-    end)
-    return true
-end
-
-local serverOrbitEvent = ReplicatedStorage:FindFirstChild("LimbOrbitToggleEvent")
-if serverOrbitEvent and (not serverOrbitEvent:IsA("RemoteEvent")
-    or serverOrbitEvent:GetAttribute("LimbOrbitServerReady") ~= true) then
-    serverOrbitEvent = nil
-end
-
-if serverOrbitEvent then
-    serverOrbitEvent.OnClientEvent:Connect(function(enabled, success, message)
-        if not success then
-            orbitEnabled = false
-        else
-            orbitEnabled = enabled
-        end
-        showOrbitState(orbitEnabled)
-        if type(message) == "string" then StatusLabel.Text = message end
-    end)
-end
-
-OrbitButton.MouseButton1Click:Connect(function()
-    local desired = not orbitEnabled
-    if serverOrbitEvent and serverOrbitEvent.Parent == ReplicatedStorage then
-        -- 僅在遊戲擁有伺服器配套程式時能讓其他玩家一起看到。
-        usingServerOrbit = true
-        stopLocalOrbit()
-        serverOrbitEvent:FireServer(desired)
-        StatusLabel.Text = "已送出外觀切換請求"
+local function startNativeAnimation()
+    local character = LocalPlayer.Character
+    local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+    if not character or not humanoid then
+        StatusLabel.Text = "找不到自己的角色"
         return
     end
 
-    usingServerOrbit = false
-    if desired then
-        orbitEnabled = true
-        if not startLocalOrbit() then
-            orbitEnabled = false
-            return
-        end
-        StatusLabel.Text = "四肢繞頭已開啟（僅自己可見）"
-    else
-        orbitEnabled = false
-        stopLocalOrbit()
-        StatusLabel.Text = "四肢繞頭已關閉"
+    -- 不可在本機自行建立 Animator；本機建的 Animator 不會同步動畫。
+    local animator = humanoid:FindFirstChildOfClass("Animator")
+    if not animator then
+        StatusLabel.Text = "缺少可同步的 Animator"
+        return
     end
-    showOrbitState(orbitEnabled)
+
+    local rigIsR15 = humanoid.RigType == Enum.HumanoidRigType.R15
+    local selectedId = CUSTOM_ANIMATION_ID
+    if selectedId == "" then
+        selectedId = rigIsR15 and R15_TEST_ANIMATION or R6_TEST_ANIMATION
+    end
+    -- 可接受純數字 ID，或 rbxassetid:// 開頭的 ID。
+    if tostring(selectedId):match("^%d+$") then
+        selectedId = "rbxassetid://" .. tostring(selectedId)
+    end
+
+    local animation = Instance.new("Animation")
+    animation.Name = "NativeSyncAnimation"
+    animation.AnimationId = selectedId
+
+    local ok, trackOrError = pcall(function()
+        return animator:LoadAnimation(animation)
+    end)
+    if not ok or not trackOrError then
+        animation:Destroy()
+        StatusLabel.Text = "動畫載入失敗，檢查 ID / 權限"
+        warn("Native animation load failed:", trackOrError)
+        return
+    end
+
+    local track = trackOrError
+    local played, playError = pcall(function()
+        track.Priority = Enum.AnimationPriority.Action4
+        track.Looped = true
+        track:Play(0.15, 1, SYNC_ANIMATION_SPEED)
+    end)
+    if not played then
+        warn("Native animation play failed:", playError)
+        pcall(function() track:Destroy() end)
+        animation:Destroy()
+        StatusLabel.Text = "無法播放動畫"
+        return
+    end
+
+    currentAnimationObject = animation
+    currentAnimationTrack = track
+    currentAnimationCharacter = character
+    animationEnabled = true
+    SyncAnimButton.Text = "原生動畫：開"
+    SyncAnimButton.BackgroundColor3 = Color3.fromRGB(50, 115, 65)
+    StatusLabel.Text = (CUSTOM_ANIMATION_ID == "") and "原生舞蹈測試中" or "自訂動畫播放中"
+
+    -- Animator:LoadAnimation 可能先回傳 Track，但資產稍後才下載；偵測明顯載入問題。
+    task.delay(5, function()
+        if animationEnabled and currentAnimationTrack == track and track.Length == 0 then
+            StatusLabel.Text = "動畫無長度：可能無權限或 ID 無效"
+            warn("Animation track has zero length: ", selectedId)
+        end
+    end)
+end
+
+SyncAnimButton.MouseButton1Click:Connect(function()
+    if animationEnabled then
+        stopNativeAnimation()
+        StatusLabel.Text = "已停止原生動畫"
+    else
+        startNativeAnimation()
+    end
 end)
 
-ScreenGui.Destroying:Connect(function()
-    if usingServerOrbit and serverOrbitEvent and serverOrbitEvent.Parent then
-        serverOrbitEvent:FireServer(false)
+LocalPlayer.CharacterRemoving:Connect(function(character)
+    if currentAnimationCharacter == character then
+        stopNativeAnimation()
     end
-    orbitEnabled = false
-    stopLocalOrbit()
 end)
+
 
 local dragging = false
 local dragStart
