@@ -59,7 +59,7 @@ ToggleButton.Parent = ScreenGui
 addCorner(ToggleButton, 8)
 
 local MainFrame = Instance.new("Frame")
-MainFrame.Size = UDim2.new(0, 360, 0, 470)
+MainFrame.Size = UDim2.new(0, 360, 0, 450)
 MainFrame.Position = UDim2.new(0, 100, 0, 100)
 MainFrame.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
 MainFrame.BackgroundTransparency = 0.08
