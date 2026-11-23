@@ -539,12 +539,12 @@ end)
 -- 以 R6 頭部、腿部的實際螢幕投影決定血條高度。
 -- 遠處玩家變小時，血條也跟著變小；不會出現人小、血條反而很大的情形。
 local healthVisible = true
-local healthEnemyOnly = true
+local healthEnemyOnly = false  -- 預設所有其他玩家，不依 Team 排除
 local healthDisplayDistance = 250 -- 最遠顯示距離 (studs)
 local hpSide = 1                   -- 1 = 玩家畫面右側；-1 = 左側
 local hpSideGap = 6                -- 血條離玩家身體的螢幕間隔 (px)
 local hpBarWidthRatio = 0.070     -- 血條寬 / 人物投影高度
-local hpShowOnlyR6 = true         -- 本次依照 R6 設計；true = 略過 R15
+local hpShowOnlyR6 = false        -- 自己使用 R6 不代表其他玩家是 R6；預設支援兩者
 local hpNameFontLimit = 16        -- 頭頂名字最大字體大小
 
 -- 獨立的 2D ScreenGui，所有顯示座標都由世界座標投影而來。
@@ -597,7 +597,7 @@ HealthMode.BackgroundColor3 = Color3.fromRGB(55, 70, 94)
 HealthMode.TextColor3 = Color3.new(1, 1, 1)
 HealthMode.TextSize = 13
 HealthMode.Font = Enum.Font.SourceSansBold
-HealthMode.Text = "只看敵隊"
+HealthMode.Text = "所有玩家"
 HealthMode.Parent = HealthFrame
 addCorner(HealthMode, 6)
 
@@ -609,7 +609,7 @@ HealthCount.TextColor3 = Color3.fromRGB(190, 190, 190)
 HealthCount.TextSize = 12
 HealthCount.Font = Enum.Font.SourceSans
 HealthCount.TextXAlignment = Enum.TextXAlignment.Center
-HealthCount.Text = "0 個血條"
+HealthCount.Text = "可見 0/0"
 HealthCount.Parent = HealthFrame
 
 local hpVisuals = {}
@@ -622,12 +622,14 @@ local function hpTrack(connection)
     return connection
 end
 
-local function hpUpdateCount()
-    local count = 0
+local hpLastVisibleCount = 0
+local function hpUpdateCount(visibleCount)
+    if visibleCount ~= nil then hpLastVisibleCount = visibleCount end
+    local attached = 0
     for _, entry in pairs(hpVisuals) do
-        if entry.barPanel and entry.barPanel.Parent then count += 1 end
+        if entry.barPanel and entry.barPanel.Parent then attached += 1 end
     end
-    HealthCount.Text = tostring(count) .. " 個血條"
+    HealthCount.Text = string.format("可見 %d/%d", math.min(hpLastVisibleCount, attached), attached)
 end
 
 local function hpShouldShow(player)
@@ -653,15 +655,33 @@ local function hpRemove(player)
 end
 
 local function hpAttach(player, character)
-    hpRemove(player)
-    if not hpActive or player.Character ~= character or not hpShouldShow(player) then return end
+    if not hpActive or player.Character ~= character or not hpShouldShow(player) then
+        hpRemove(player)
+        return
+    end
     local humanoid = character:FindFirstChildOfClass("Humanoid")
     local head = character:FindFirstChild("Head")
     local torso = character:FindFirstChild("Torso")
+        or character:FindFirstChild("UpperTorso")
+        or character:FindFirstChild("HumanoidRootPart")
     local leftLeg = character:FindFirstChild("Left Leg")
+        or character:FindFirstChild("LeftFoot")
+        or character:FindFirstChild("LeftLowerLeg")
     local rightLeg = character:FindFirstChild("Right Leg")
+        or character:FindFirstChild("RightFoot")
+        or character:FindFirstChild("RightLowerLeg")
+    -- 角色尚未載入完成時，不要刪除既有血條，下一次維護會重試。
     if not humanoid or not head or not torso then return end
-    if hpShowOnlyR6 and humanoid.RigType ~= Enum.HumanoidRigType.R6 then return end
+    if hpShowOnlyR6 and humanoid.RigType ~= Enum.HumanoidRigType.R6 then
+        hpRemove(player)
+        return
+    end
+    local previous = hpVisuals[player]
+    if previous and previous.humanoid == humanoid and previous.head == head
+        and previous.torso == torso then
+        return
+    end
+    hpRemove(player)
 
     -- 玩家頭上的名稱：獨立 UI，不會跟血條排在同一框中。
     local nameLabel = Instance.new("TextLabel")
@@ -778,11 +798,14 @@ local function hpWatchPlayer(player)
     hpPlayerConnections[player] = connections
     local function watchCharacter(character)
         task.spawn(function()
-            local humanoid = character:WaitForChild("Humanoid", 8)
-            local head = character:WaitForChild("Head", 8)
+            local humanoid = character:WaitForChild("Humanoid", 12)
+            local head = character:WaitForChild("Head", 12)
             if not humanoid or not head then return end
             if hpShowOnlyR6 and humanoid.RigType ~= Enum.HumanoidRigType.R6 then return end
-            local torso = character:WaitForChild("Torso", 8)
+            local torso = character:FindFirstChild("Torso")
+                or character:FindFirstChild("UpperTorso")
+                or character:FindFirstChild("HumanoidRootPart")
+                or character:WaitForChild("HumanoidRootPart", 12)
             if torso and hpActive and player.Character == character then
                 hpAttach(player, character)
             end
@@ -824,13 +847,35 @@ hpTrack(Players.PlayerRemoving:Connect(function(player)
 end))
 for _, player in ipairs(Players:GetPlayers()) do hpWatchPlayer(player) end
 
--- R6 人物頭頂到雙腳的投影高度決定血條高度；所有玩家使用相同比例。
+-- 自動補抓已在線、晚載入及串流進入範圍的角色。
+-- 只在沒有血條時嘗試建立，避免重複製作 UI 或反覆清除。
+task.spawn(function()
+    while hpActive do
+        for _, player in ipairs(Players:GetPlayers()) do
+            if player ~= LocalPlayer then
+                local character = player.Character
+                local existing = hpVisuals[player]
+                if not hpShouldShow(player) then
+                    if existing then hpRemove(player) end
+                elseif character and (not existing or existing.humanoid.Parent ~= character) then
+                    hpAttach(player, character)
+                elseif not character and existing then
+                    hpRemove(player)
+                end
+            end
+        end
+        task.wait(1.5)
+    end
+end)
+
+-- 人物頭頂到雙腳的投影高度決定血條高度；R6、R15 都使用相同比例。
 local hpRenderConnection = RunService.RenderStepped:Connect(function()
     if not hpActive then return end
     local camera = workspace.CurrentCamera
     if not camera then return end
     local ownRoot = getRootPart(LocalPlayer)
     local eyePosition = (ownRoot and ownRoot.Position) or camera.CFrame.Position
+    local nowVisible = 0
     for player, entry in pairs(hpVisuals) do
         local panel, name = entry.barPanel, entry.nameLabel
         local head, torso = entry.head, entry.torso
@@ -871,6 +916,7 @@ local hpRenderConnection = RunService.RenderStepped:Connect(function()
                 entry.hpNumber.Position = UDim2.fromOffset(barWidth + 5, 0)
                 entry.hpNumber.TextSize = math.clamp(math.floor(figureHeight * 0.16), 9, 13)
                 panel.Visible = true
+                nowVisible += 1
 
                 local fontSize = math.clamp(math.floor(figureHeight * 0.16), 9, hpNameFontLimit)
                 name.TextSize = fontSize
@@ -882,6 +928,9 @@ local hpRenderConnection = RunService.RenderStepped:Connect(function()
                 name.Visible = false
             end
         end
+    end
+    if nowVisible ~= hpLastVisibleCount then
+        hpUpdateCount(nowVisible)
     end
 end)
 
