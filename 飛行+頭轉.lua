@@ -36,7 +36,7 @@ end
 local targetPlayer = nil
 local currentMarker = nil
 
-local flySpeed = 80
+local flySpeed = 100
 local flyHeight = 5
 local isFlying = false
 
@@ -47,10 +47,10 @@ local followConnection = nil
 local lastUseTime = 0
 local cooldown = 0.35
 
--- 可自行調整：頭身分離／高速旋轉特效
-local spinHeadGap = 3                     -- 頭部與身體的視覺間隔（studs）
-local spinHeadSpeed = 1440                -- 頭部旋轉速度（度／秒）
-local spinBodySpeed = 720                 -- 身體旋轉速度（度／秒）
+-- 可調整的頭身分離／旋轉設定（只影響自己角色的畫面）
+local headSeparation = 4          -- 頭與身體的間距（studs）
+local headSpinSpeed = 2160        -- 頭部每秒旋轉角度
+local bodySpinSpeed = 1440        -- 身體每秒旋轉角度，實際會反方向旋轉
 
 local ToggleButton = Instance.new("TextButton")
 ToggleButton.Size = UDim2.new(0, 75, 0, 35)
@@ -64,7 +64,7 @@ ToggleButton.Parent = ScreenGui
 addCorner(ToggleButton, 8)
 
 local MainFrame = Instance.new("Frame")
-MainFrame.Size = UDim2.new(0, 360, 0, 470)
+MainFrame.Size = UDim2.new(0, 360, 0, 360)
 MainFrame.Position = UDim2.new(0, 100, 0, 100)
 MainFrame.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
 MainFrame.BackgroundTransparency = 0.08
@@ -200,18 +200,22 @@ local function createSpeedButton(text, speed, x)
 end
 
 createSpeedButton("慢 30", 30, 8)
-createSpeedButton("中 80", 80, 86)
-createSpeedButton("快 150", 150, 164)
-createSpeedButton("超快 250", 250, 242)
+createSpeedButton("中 250", 250, 86)
+createSpeedButton("快 500", 500, 164)
+createSpeedButton("超快 1000", 1000, 242)
+
 
 local StatusLabel = Instance.new("TextLabel")
-StatusLabel.Size = UDim2.new(1, -126, 0, 26)
-StatusLabel.Position = UDim2.new(0, 120, 1, -32)
+StatusLabel.Size = UDim2.new(1, -12, 0, 26)
+StatusLabel.Position = UDim2.new(0, 6, 1, -32)
 StatusLabel.BackgroundTransparency = 1
 StatusLabel.TextColor3 = Color3.fromRGB(200, 200, 200)
 StatusLabel.TextSize = 13
 StatusLabel.Font = Enum.Font.SourceSans
 StatusLabel.Text = "選擇一個玩家"
+StatusLabel.TextXAlignment = Enum.TextXAlignment.Left
+StatusLabel.TextTruncate = Enum.TextTruncate.AtEnd
+StatusLabel.Size = UDim2.new(1, -142, 0, 26) -- 右邊留給新開關
 StatusLabel.Parent = MainFrame
 
 local PlayerList = Instance.new("ScrollingFrame")
@@ -219,8 +223,15 @@ PlayerList.Size = UDim2.new(1, -12, 1, -150)
 PlayerList.Position = UDim2.new(0, 6, 0, 114)
 PlayerList.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
 PlayerList.BorderSizePixel = 0
+
+-- 啟用上下捲動
+PlayerList.Active = true
+PlayerList.ScrollingEnabled = true
+PlayerList.ScrollingDirection = Enum.ScrollingDirection.Y
 PlayerList.ScrollBarThickness = 6
+PlayerList.AutomaticCanvasSize = Enum.AutomaticSize.Y
 PlayerList.CanvasSize = UDim2.new(0, 0, 0, 0)
+
 PlayerList.Parent = MainFrame
 addCorner(PlayerList, 8)
 
@@ -236,67 +247,108 @@ UIPadding.PaddingRight = UDim.new(0, 6)
 UIPadding.PaddingBottom = UDim.new(0, 6)
 UIPadding.Parent = PlayerList
 
-UIListLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
-	PlayerList.CanvasSize = UDim2.new(0, 0, 0, UIListLayout.AbsoluteContentSize.Y + 12)
-end)
 
--- 頭身分離／高速旋轉（本機視覺效果，不破壞頸部關節）
+-- 新增：頭身分離 + 頭部／身體反向高速旋轉
+-- 不刪除頸部關節，避免觸發 Humanoid.RequiresNeck 的死亡判定。
+-- 同時支援傳統 R6/R15 Motor6D 與新版 R15 AnimationConstraint。
 local SpinButton = Instance.new("TextButton")
-SpinButton.Name = "HeadBodySpinButton"
-SpinButton.Size = UDim2.new(0, 108, 0, 26)
-SpinButton.Position = UDim2.new(0, 6, 1, -32)
+SpinButton.Name = "HeadBodySpinToggle"
+SpinButton.Size = UDim2.new(0, 124, 0, 26)
+SpinButton.Position = UDim2.new(1, -130, 1, -32)
 SpinButton.BackgroundColor3 = Color3.fromRGB(70, 70, 95)
 SpinButton.TextColor3 = Color3.new(1, 1, 1)
-SpinButton.TextSize = 13
+SpinButton.TextSize = 12
 SpinButton.Font = Enum.Font.SourceSansBold
-SpinButton.Text = "分離狂轉: 關"
+SpinButton.Text = "頭身狂轉: 關"
 SpinButton.Parent = MainFrame
 addCorner(SpinButton, 6)
 
 local spinEnabled = false
 local spinConnection = nil
-local spinTrackedCharacter = nil
+local spinCharacter = nil
 local spinNeck = nil
-local spinRoot = nil
-local spinElapsed = 0
+local spinBody = nil
+local originalNeckC0 = nil
+local originalBodyC0 = nil
+local spinTime = 0
 
-local function isSpinJoint(obj)
+local function isAnimatedJoint(obj)
     return obj:IsA("Motor6D") or obj:IsA("AnimationConstraint")
 end
 
 local function findSpinJoints(character)
-    local neck, root = nil, nil
     local head = character:FindFirstChild("Head")
-    local humanoidRoot = character:FindFirstChild("HumanoidRootPart")
+    local root = character:FindFirstChild("HumanoidRootPart")
+    local neck, body = nil, nil
+    if not head or not root then return nil, nil end
 
+    -- 尋找真正連到頭部與軀幹的關節，避免只依賴某個 R6/R15 的固定路徑。
+    -- 新型 R15 的 AnimationConstraint.Part0 / Part1 是可讀取的相容欄位。
     for _, obj in ipairs(character:GetDescendants()) do
-        if isSpinJoint(obj) then
-            -- Motor6D 與較新的 AnimationConstraint 都有 Part0、Part1 可讀
+        if isAnimatedJoint(obj) then
             local part0, part1 = obj.Part0, obj.Part1
-            if head and part1 == head then
-                neck = obj
-            elseif humanoidRoot and part0 == humanoidRoot
-                and part1 and (part1.Name == "Torso" or part1.Name == "LowerTorso") then
-                root = obj
+            if part1 == head then
+                if not neck or obj.Name == "Neck" then neck = obj end
+            elseif part0 == root and part1
+                and (part1.Name == "Torso" or part1.Name == "LowerTorso") then
+                if not body or obj.Name == "Root" or obj.Name == "RootJoint" then
+                    body = obj
+                end
             end
         end
     end
-    return neck, root
+
+    -- 有些自訂 R15 缺少標準 Root 關節，退而使用 Waist 讓上身旋轉。
+    if not body then
+        for _, obj in ipairs(character:GetDescendants()) do
+            if isAnimatedJoint(obj) and obj.Name == "Waist" then
+                body = obj
+                break
+            end
+        end
+    end
+    return neck, body
 end
 
-local function updateSpinButton()
-    SpinButton.Text = spinEnabled and "分離狂轉: 開" or "分離狂轉: 關"
+local function refreshSpinButton()
+    SpinButton.Text = spinEnabled and "頭身狂轉: 開" or "頭身狂轉: 關"
     SpinButton.BackgroundColor3 = spinEnabled
-        and Color3.fromRGB(60, 115, 75)
+        and Color3.fromRGB(53, 126, 75)
         or Color3.fromRGB(70, 70, 95)
 end
 
-local function resetSpinJoint(joint)
-    if joint and joint.Parent then
-        pcall(function()
-            joint.Transform = CFrame.new()
-        end)
+local function restoreSpinJoints()
+    if spinNeck and spinNeck.Parent then
+        if spinNeck:IsA("Motor6D") and originalNeckC0 then
+            spinNeck.C0 = originalNeckC0
+        elseif spinNeck:IsA("AnimationConstraint") then
+            spinNeck.Transform = CFrame.new()
+        end
     end
+    if spinBody and spinBody.Parent then
+        if spinBody:IsA("Motor6D") and originalBodyC0 then
+            spinBody.C0 = originalBodyC0
+        elseif spinBody:IsA("AnimationConstraint") then
+            spinBody.Transform = CFrame.new()
+        end
+    end
+    spinNeck, spinBody = nil, nil
+    originalNeckC0, originalBodyC0 = nil, nil
+end
+
+local function attachSpinToCharacter(character)
+    restoreSpinJoints()
+    spinCharacter = character
+    if not character then return false end
+    spinNeck, spinBody = findSpinJoints(character)
+    if not spinNeck then return false end
+    if spinNeck:IsA("Motor6D") then
+        originalNeckC0 = spinNeck.C0
+    end
+    if spinBody and spinBody:IsA("Motor6D") then
+        originalBodyC0 = spinBody.C0
+    end
+    return true
 end
 
 local function stopHeadBodySpin()
@@ -305,61 +357,57 @@ local function stopHeadBodySpin()
         spinConnection:Disconnect()
         spinConnection = nil
     end
-    resetSpinJoint(spinNeck)
-    resetSpinJoint(spinRoot)
-    spinNeck, spinRoot = nil, nil
-    spinTrackedCharacter = nil
-    updateSpinButton()
+    restoreSpinJoints()
+    spinCharacter = nil
+    refreshSpinButton()
 end
 
 local function startHeadBodySpin()
     if spinEnabled then return end
-
     local character = LocalPlayer.Character
     if not character then
         StatusLabel.Text = "找不到自己的角色"
         return
     end
-
-    local neck, root = findSpinJoints(character)
-    if not neck then
-        StatusLabel.Text = "無法取得頸部關節"
+    if not attachSpinToCharacter(character) then
+        StatusLabel.Text = "無法取得頭部關節（角色尚未載入或特殊模型）"
         return
     end
 
     spinEnabled = true
-    spinElapsed = 0
-    spinTrackedCharacter = character
-    spinNeck, spinRoot = neck, root
-    updateSpinButton()
-    StatusLabel.Text = "頭身分離旋轉已開啟"
+    spinTime = 0
+    refreshSpinButton()
+    StatusLabel.Text = spinBody and "頭身分離旋轉已開啟" or "頭部旋轉已開啟（找不到身體關節）"
 
-    -- 動畫系統會每幀更新 Transform；PreSimulation 才能覆蓋當幀姿勢
+    -- 與上一版不同：傳統 Motor6D 改寫 C0（立即生效）；
+    -- 新版 AnimationConstraint 則在 PreSimulation 寫入 Transform。
+    -- 兩者都不拆關節，且不改動 HumanoidRootPart 的飛行／TP 邏輯。
     spinConnection = RunService.PreSimulation:Connect(function(dt)
         if not spinEnabled then return end
-        local currentCharacter = LocalPlayer.Character
-        if currentCharacter ~= spinTrackedCharacter or not spinNeck or not spinNeck.Parent then
-            resetSpinJoint(spinNeck)
-            resetSpinJoint(spinRoot)
-            spinTrackedCharacter = currentCharacter
-            spinNeck, spinRoot = nil, nil
-            if currentCharacter then
-                spinNeck, spinRoot = findSpinJoints(currentCharacter)
-            end
+        local current = LocalPlayer.Character
+        if current ~= spinCharacter or not spinNeck or not spinNeck.Parent then
+            if not attachSpinToCharacter(current) then return end
+        end
+        spinTime += math.min(dt, 0.1)
+
+        local headAngle = math.rad(headSpinSpeed) * spinTime
+        local bodyAngle = math.rad(bodySpinSpeed) * spinTime
+        local headEffect = CFrame.new(0, headSeparation, 0)
+            * CFrame.Angles(math.sin(spinTime * 9) * 0.45, headAngle, math.sin(spinTime * 7) * 0.4)
+        local bodyEffect = CFrame.Angles(math.sin(spinTime * 5) * 0.16, -bodyAngle, 0)
+
+        if spinNeck:IsA("Motor6D") then
+            spinNeck.C0 = originalNeckC0 * headEffect
+        else
+            spinNeck.Transform = headEffect
         end
 
-        if not spinNeck then return end
-        spinElapsed += math.min(dt, 0.1)
-        local headAngle = math.rad(spinHeadSpeed) * spinElapsed
-        local bodyAngle = math.rad(spinBodySpeed) * spinElapsed
-
-        -- 頭部往上分離並單獨高速旋轉；不直接刪除 Neck
-        spinNeck.Transform = CFrame.new(0, spinHeadGap, 0)
-            * CFrame.Angles(math.sin(spinElapsed * 7) * 0.35, headAngle, math.sin(spinElapsed * 9) * 0.35)
-
-        -- 身體朝相反方向轉動，角色根部保持原位
-        if spinRoot and spinRoot.Parent then
-            spinRoot.Transform = CFrame.Angles(0, -bodyAngle, math.sin(spinElapsed * 5) * 0.15)
+        if spinBody and spinBody.Parent then
+            if spinBody:IsA("Motor6D") then
+                spinBody.C0 = originalBodyC0 * bodyEffect
+            else
+                spinBody.Transform = bodyEffect
+            end
         end
     end)
 end
@@ -373,10 +421,8 @@ SpinButton.MouseButton1Click:Connect(function()
     end
 end)
 
--- 重複執行新版腳本、銷毀 GUI 時，不留下舊旋轉連線
-ScreenGui.Destroying:Connect(function()
-    stopHeadBodySpin()
-end)
+-- 避免腳本重複執行時留下上一版的旋轉連線與變形。
+ScreenGui.Destroying:Connect(stopHeadBodySpin)
 
 local dragging = false
 local dragStart
@@ -640,12 +686,12 @@ local function flyAbovePlayer(player)
 end
 
 SpeedDownButton.MouseButton1Click:Connect(function()
-	flySpeed = math.max(10, flySpeed - 10)
+	flySpeed = flySpeed - 40
 	updateSpeedText()
 end)
 
 SpeedUpButton.MouseButton1Click:Connect(function()
-	flySpeed = flySpeed + 10
+	flySpeed = flySpeed + 40
 	updateSpeedText()
 end)
 
