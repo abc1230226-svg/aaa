@@ -540,10 +540,10 @@ end)
 local healthVisible = true
 local healthEnemyOnly = false -- 預設顯示所有其他玩家，避免無隊伍/同隊時排除
 local healthDisplayDistance = 1500  -- 最遠顯示距離（studs）
-local hpBillboardWidth = 6       -- 整個血條 UI 的世界寬度（studs）
-local hpBillboardHeight = 5.8      -- 整個血條 UI 的世界高度（studs）
-local hpWorldVerticalOffset = -2.1 -- 以頭部為基準，向下移動 UI 中心（studs）
-local hpBarRightPosition = 1.3    -- 血條相對 UI 的水平位置，0 到 1
+local hpBillboardWidth = 7.0
+local hpBillboardHeight = 6.2
+local hpWorldVerticalOffset = -1.3
+local hpBarRightPosition = 1.00 -- 血條相對 UI 的水平位置，0 到 1
 
 local hpGuiFolderName = "PlayerMarkerFlyLock_HP_Overlays"
 local oldHPFolder = UI_PARENT:FindFirstChild(hpGuiFolderName)
