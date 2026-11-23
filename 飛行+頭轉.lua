@@ -540,10 +540,10 @@ end)
 local healthVisible = true
 local healthEnemyOnly = false -- 預設顯示所有其他玩家，避免無隊伍/同隊時排除
 local healthDisplayDistance = 1500  -- 最遠顯示距離（studs）
-local hpBillboardWidth = 5.4       -- 整個血條 UI 的世界寬度（studs）
+local hpBillboardWidth = 6       -- 整個血條 UI 的世界寬度（studs）
 local hpBillboardHeight = 5.8      -- 整個血條 UI 的世界高度（studs）
 local hpWorldVerticalOffset = -2.1 -- 以頭部為基準，向下移動 UI 中心（studs）
-local hpBarRightPosition = 0.83    -- 血條相對 UI 的水平位置，0 到 1
+local hpBarRightPosition = 1.3    -- 血條相對 UI 的水平位置，0 到 1
 
 local hpGuiFolderName = "PlayerMarkerFlyLock_HP_Overlays"
 local oldHPFolder = UI_PARENT:FindFirstChild(hpGuiFolderName)
@@ -670,7 +670,7 @@ local function hpAttach(player, character)
     nameLabel.Name = "PlayerName"
     nameLabel.AnchorPoint = Vector2.new(0.5, 0)
     nameLabel.Size = UDim2.new(0.74, 0, 0.15, 0)
-    nameLabel.Position = UDim2.new(0.50, 0, 0.01, 0)
+    nameLabel.Position = UDim2.new(0.60, 0, 0.01, 0)
     nameLabel.BackgroundTransparency = 1
     nameLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
     nameLabel.TextStrokeColor3 = Color3.fromRGB(10, 10, 10)
@@ -687,7 +687,7 @@ local function hpAttach(player, character)
     -- 角色右側直立 HP 血條，填充方向由下往上
     local barBack = Instance.new("Frame")
     barBack.Name = "VerticalHPBackground"
-    barBack.Size = UDim2.new(0.055, 0, 0.70, 0)
+    barBack.Size = UDim2.new(0.08, 0, 0.85, 0)
     barBack.Position = UDim2.new(hpBarRightPosition, 0, 0.23, 0)
     barBack.BackgroundColor3 = Color3.fromRGB(27, 29, 34)
     barBack.BorderSizePixel = 0
@@ -707,7 +707,7 @@ local function hpAttach(player, character)
     -- 直立血條右側顯示剩餘血量
     local label = Instance.new("TextLabel")
     label.Name = "HPAmount"
-    label.Size = UDim2.new(0.15, 0, 0.12, 0)
+    label.Size = UDim2.new(0.32, 0, 0.3, 0)
     label.Position = UDim2.new(hpBarRightPosition + 0.06, 0, 0.23, 0)
     label.BackgroundTransparency = 1
     label.TextColor3 = Color3.new(1, 1, 1)
