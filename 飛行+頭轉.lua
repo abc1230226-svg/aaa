@@ -47,11 +47,6 @@ local followConnection = nil
 local lastUseTime = 0
 local cooldown = 0.35
 
--- 可調整的頭身分離／旋轉設定（只影響自己角色的畫面）
-local headSeparation = 4          -- 頭與身體的間距（studs）
-local headSpinSpeed = 2160        -- 頭部每秒旋轉角度
-local bodySpinSpeed = 1440        -- 身體每秒旋轉角度，實際會反方向旋轉
-
 local ToggleButton = Instance.new("TextButton")
 ToggleButton.Size = UDim2.new(0, 75, 0, 35)
 ToggleButton.Position = UDim2.new(0, 20, 0, 150)
@@ -215,7 +210,7 @@ StatusLabel.Font = Enum.Font.SourceSans
 StatusLabel.Text = "選擇一個玩家"
 StatusLabel.TextXAlignment = Enum.TextXAlignment.Left
 StatusLabel.TextTruncate = Enum.TextTruncate.AtEnd
-StatusLabel.Size = UDim2.new(1, -142, 0, 26) -- 右邊留給新開關
+StatusLabel.Size = UDim2.new(1, -142, 0, 26)
 StatusLabel.Parent = MainFrame
 
 local PlayerList = Instance.new("ScrollingFrame")
@@ -248,181 +243,289 @@ UIPadding.PaddingBottom = UDim.new(0, 6)
 UIPadding.Parent = PlayerList
 
 
--- 新增：頭身分離 + 頭部／身體反向高速旋轉
--- 不刪除頸部關節，避免觸發 Humanoid.RequiresNeck 的死亡判定。
--- 同時支援傳統 R6/R15 Motor6D 與新版 R15 AnimationConstraint。
-local SpinButton = Instance.new("TextButton")
-SpinButton.Name = "HeadBodySpinToggle"
-SpinButton.Size = UDim2.new(0, 124, 0, 26)
-SpinButton.Position = UDim2.new(1, -130, 1, -32)
-SpinButton.BackgroundColor3 = Color3.fromRGB(70, 70, 95)
-SpinButton.TextColor3 = Color3.new(1, 1, 1)
-SpinButton.TextSize = 12
-SpinButton.Font = Enum.Font.SourceSansBold
-SpinButton.Text = "頭身狂轉: 關"
-SpinButton.Parent = MainFrame
-addCorner(SpinButton, 6)
+-- 新增：四肢繞頭（用戶端外觀；若遊戲安裝配套伺服器程式則會同步其他玩家）
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local orbitRadius = 1.8          -- 四肢繞頭半徑（studs）
+local orbitSpeed = 1080         -- 繞頭速度（度／秒）
+local orbitWobble = 0.75        -- 上下亂繞的幅度
+local limbSelfSpin = 1440       -- 四肢自轉速度（度／秒）
 
-local spinEnabled = false
-local spinConnection = nil
-local spinCharacter = nil
-local spinNeck = nil
-local spinBody = nil
-local originalNeckC0 = nil
-local originalBodyC0 = nil
-local spinTime = 0
+local OrbitButton = Instance.new("TextButton")
+OrbitButton.Name = "LimbOrbitToggle"
+OrbitButton.Size = UDim2.new(0, 124, 0, 26)
+OrbitButton.Position = UDim2.new(1, -130, 1, -32)
+OrbitButton.BackgroundColor3 = Color3.fromRGB(70, 70, 95)
+OrbitButton.TextColor3 = Color3.new(1, 1, 1)
+OrbitButton.TextSize = 12
+OrbitButton.Font = Enum.Font.SourceSansBold
+OrbitButton.Text = "四肢繞頭：關"
+OrbitButton.Parent = MainFrame
+addCorner(OrbitButton, 6)
 
-local function isAnimatedJoint(obj)
-    return obj:IsA("Motor6D") or obj:IsA("AnimationConstraint")
+-- ===== 四肢圍繞頭部的視覺效果（R6 / R15） =====
+-- 與物理角色分開：克隆手腳來旋轉，原始關節完全不拆除。
+local LIMB_GROUPS = {
+    {"LeftUpperArm", "LeftLowerArm", "LeftHand"},
+    {"RightUpperArm", "RightLowerArm", "RightHand"},
+    {"LeftUpperLeg", "LeftLowerLeg", "LeftFoot"},
+    {"RightUpperLeg", "RightLowerLeg", "RightFoot"},
+}
+local LIMB_GROUPS_R6 = {
+    {"Left Arm"},
+    {"Right Arm"},
+    {"Left Leg"},
+    {"Right Leg"},
+}
+
+local function makeOrbitVisual(original)
+    local previousArchivable = original.Archivable
+    original.Archivable = true
+    local ok, clone = pcall(function() return original:Clone() end)
+    original.Archivable = previousArchivable
+    if not ok or not clone then
+        clone = Instance.new("Part")
+        clone.Size = original.Size
+        clone.Color = original.Color
+        clone.Material = original.Material
+    end
+    -- 不複製關節、碰撞與執行程式。
+    for _, child in ipairs(clone:GetDescendants()) do
+        if child:IsA("JointInstance") or child:IsA("Constraint")
+            or child:IsA("Script") or child:IsA("LocalScript")
+            or child:IsA("ModuleScript") or child:IsA("BodyMover")
+            or child:IsA("Sound") then
+            child:Destroy()
+        end
+    end
+    clone.Name = "Orbit_" .. original.Name
+    clone.Anchored = true
+    clone.CanCollide = false
+    clone.CanTouch = false
+    clone.CanQuery = false
+    clone.CastShadow = false
+    clone.Massless = true
+    clone.LocalTransparencyModifier = 0
+    return clone
 end
 
-local function findSpinJoints(character)
-    local head = character:FindFirstChild("Head")
-    local root = character:FindFirstChild("HumanoidRootPart")
-    local neck, body = nil, nil
-    if not head or not root then return nil, nil end
+local function orbitPose(headCF, groupIndex, elapsed, radius, speedDegrees, wobble, selfSpinDegrees)
+    local phase = (groupIndex - 1) * (math.pi / 2)
+    local direction = (groupIndex % 2 == 0) and -1 or 1
+    local angle = phase + math.rad(speedDegrees) * elapsed * direction * (0.84 + groupIndex * 0.055)
+    local varyingRadius = radius + 0.25 * math.sin(elapsed * 5.3 + phase)
+    local x = math.cos(angle) * varyingRadius
+    local y = math.sin(angle * 1.27 + phase) * wobble
+    local z = math.sin(angle) * varyingRadius
+    local twist = math.rad(selfSpinDegrees) * elapsed * (groupIndex % 2 == 0 and 1 or -1)
+    return headCF * CFrame.new(x, y, z)
+        * CFrame.Angles(twist * 0.65, twist, twist * 0.39)
+end
 
-    -- 尋找真正連到頭部與軀幹的關節，避免只依賴某個 R6/R15 的固定路徑。
-    -- 新型 R15 的 AnimationConstraint.Part0 / Part1 是可讀取的相容欄位。
-    for _, obj in ipairs(character:GetDescendants()) do
-        if isAnimatedJoint(obj) then
-            local part0, part1 = obj.Part0, obj.Part1
-            if part1 == head then
-                if not neck or obj.Name == "Neck" then neck = obj end
-            elseif part0 == root and part1
-                and (part1.Name == "Torso" or part1.Name == "LowerTorso") then
-                if not body or obj.Name == "Root" or obj.Name == "RootJoint" then
-                    body = obj
+-- 每組由 1 個（R6）或 3 個（R15）肢體零件組成。
+local function constructOrbit(character, parentFolder, hideLocally)
+    local head = character:FindFirstChild("Head")
+    if not head or not head:IsA("BasePart") then return nil end
+
+    local names = character:FindFirstChild("LeftUpperArm") and LIMB_GROUPS or LIMB_GROUPS_R6
+    local data = {character=character, head=head, folder=parentFolder, groups={}, hidden={}}
+
+    for index, limbNames in ipairs(names) do
+        local originalParts = {}
+        for _, name in ipairs(limbNames) do
+            local part = character:FindFirstChild(name)
+            if part and part:IsA("BasePart") then
+                table.insert(originalParts, part)
+            end
+        end
+        if #originalParts > 0 then
+            local firstCF = originalParts[1].CFrame
+            local group = {index=index, segments={}}
+            for _, original in ipairs(originalParts) do
+                local clone = makeOrbitVisual(original)
+                clone.CFrame = original.CFrame
+                clone.Parent = parentFolder
+                table.insert(group.segments, {
+                    part = clone,
+                    relative = firstCF:ToObjectSpace(original.CFrame)
+                })
+                if data.hidden[original] == nil then
+                    data.hidden[original] = hideLocally
+                        and original.LocalTransparencyModifier or original.Transparency
+                    if hideLocally then
+                        original.LocalTransparencyModifier = 1
+                    else
+                        original.Transparency = 1
+                    end
+                end
+            end
+            table.insert(data.groups, group)
+        end
+    end
+
+    -- 身體在視覺上消失，留下中央的頭與繞頭的四肢。
+    for _, name in ipairs({"Torso", "UpperTorso", "LowerTorso"}) do
+        local part = character:FindFirstChild(name)
+        if part and part:IsA("BasePart") and data.hidden[part] == nil then
+            data.hidden[part] = hideLocally
+                and part.LocalTransparencyModifier or part.Transparency
+            if hideLocally then
+                part.LocalTransparencyModifier = 1
+            else
+                part.Transparency = 1
+            end
+        end
+    end
+
+    if #data.groups == 0 then
+        for part, oldValue in pairs(data.hidden) do
+            if part and part.Parent then
+                if hideLocally then
+                    part.LocalTransparencyModifier = oldValue
+                else
+                    part.Transparency = oldValue
                 end
             end
         end
+        return nil
     end
+    return data
+end
 
-    -- 有些自訂 R15 缺少標準 Root 關節，退而使用 Waist 讓上身旋轉。
-    if not body then
-        for _, obj in ipairs(character:GetDescendants()) do
-            if isAnimatedJoint(obj) and obj.Name == "Waist" then
-                body = obj
-                break
+local function renderOrbit(data, elapsed, radius, speedDegrees, wobble, selfSpinDegrees)
+    if not data or not data.head or not data.head.Parent then return false end
+    local headCF = data.head.CFrame
+    for _, group in ipairs(data.groups) do
+        local pivot = orbitPose(headCF, group.index, elapsed, radius, speedDegrees, wobble, selfSpinDegrees)
+        for _, segment in ipairs(group.segments) do
+            if segment.part.Parent then
+                segment.part.CFrame = pivot * segment.relative
             end
         end
-    end
-    return neck, body
-end
-
-local function refreshSpinButton()
-    SpinButton.Text = spinEnabled and "頭身狂轉: 開" or "頭身狂轉: 關"
-    SpinButton.BackgroundColor3 = spinEnabled
-        and Color3.fromRGB(53, 126, 75)
-        or Color3.fromRGB(70, 70, 95)
-end
-
-local function restoreSpinJoints()
-    if spinNeck and spinNeck.Parent then
-        if spinNeck:IsA("Motor6D") and originalNeckC0 then
-            spinNeck.C0 = originalNeckC0
-        elseif spinNeck:IsA("AnimationConstraint") then
-            spinNeck.Transform = CFrame.new()
-        end
-    end
-    if spinBody and spinBody.Parent then
-        if spinBody:IsA("Motor6D") and originalBodyC0 then
-            spinBody.C0 = originalBodyC0
-        elseif spinBody:IsA("AnimationConstraint") then
-            spinBody.Transform = CFrame.new()
-        end
-    end
-    spinNeck, spinBody = nil, nil
-    originalNeckC0, originalBodyC0 = nil, nil
-end
-
-local function attachSpinToCharacter(character)
-    restoreSpinJoints()
-    spinCharacter = character
-    if not character then return false end
-    spinNeck, spinBody = findSpinJoints(character)
-    if not spinNeck then return false end
-    if spinNeck:IsA("Motor6D") then
-        originalNeckC0 = spinNeck.C0
-    end
-    if spinBody and spinBody:IsA("Motor6D") then
-        originalBodyC0 = spinBody.C0
     end
     return true
 end
 
-local function stopHeadBodySpin()
-    spinEnabled = false
-    if spinConnection then
-        spinConnection:Disconnect()
-        spinConnection = nil
-    end
-    restoreSpinJoints()
-    spinCharacter = nil
-    refreshSpinButton()
-end
-
-local function startHeadBodySpin()
-    if spinEnabled then return end
-    local character = LocalPlayer.Character
-    if not character then
-        StatusLabel.Text = "找不到自己的角色"
-        return
-    end
-    if not attachSpinToCharacter(character) then
-        StatusLabel.Text = "無法取得頭部關節（角色尚未載入或特殊模型）"
-        return
-    end
-
-    spinEnabled = true
-    spinTime = 0
-    refreshSpinButton()
-    StatusLabel.Text = spinBody and "頭身分離旋轉已開啟" or "頭部旋轉已開啟（找不到身體關節）"
-
-    -- 與上一版不同：傳統 Motor6D 改寫 C0（立即生效）；
-    -- 新版 AnimationConstraint 則在 PreSimulation 寫入 Transform。
-    -- 兩者都不拆關節，且不改動 HumanoidRootPart 的飛行／TP 邏輯。
-    spinConnection = RunService.PreSimulation:Connect(function(dt)
-        if not spinEnabled then return end
-        local current = LocalPlayer.Character
-        if current ~= spinCharacter or not spinNeck or not spinNeck.Parent then
-            if not attachSpinToCharacter(current) then return end
-        end
-        spinTime += math.min(dt, 0.1)
-
-        local headAngle = math.rad(headSpinSpeed) * spinTime
-        local bodyAngle = math.rad(bodySpinSpeed) * spinTime
-        local headEffect = CFrame.new(0, headSeparation, 0)
-            * CFrame.Angles(math.sin(spinTime * 9) * 0.45, headAngle, math.sin(spinTime * 7) * 0.4)
-        local bodyEffect = CFrame.Angles(math.sin(spinTime * 5) * 0.16, -bodyAngle, 0)
-
-        if spinNeck:IsA("Motor6D") then
-            spinNeck.C0 = originalNeckC0 * headEffect
-        else
-            spinNeck.Transform = headEffect
-        end
-
-        if spinBody and spinBody.Parent then
-            if spinBody:IsA("Motor6D") then
-                spinBody.C0 = originalBodyC0 * bodyEffect
+local function destroyOrbit(data, hideLocally)
+    if not data then return end
+    for part, oldValue in pairs(data.hidden) do
+        if part and part.Parent then
+            if hideLocally then
+                part.LocalTransparencyModifier = oldValue
             else
-                spinBody.Transform = bodyEffect
+                part.Transparency = oldValue
             end
         end
+    end
+    if data.folder then data.folder:Destroy() end
+end
+
+local orbitEnabled = false
+local orbitConnection = nil
+local orbitData = nil
+local orbitElapsed = 0
+local usingServerOrbit = false
+
+local function showOrbitState(enabled)
+    OrbitButton.Text = enabled and "四肢繞頭：開" or "四肢繞頭：關"
+    OrbitButton.BackgroundColor3 = enabled
+        and Color3.fromRGB(50, 125, 75)
+        or Color3.fromRGB(70, 70, 95)
+end
+
+local function stopLocalOrbit()
+    if orbitConnection then
+        orbitConnection:Disconnect()
+        orbitConnection = nil
+    end
+    destroyOrbit(orbitData, true)
+    orbitData = nil
+end
+
+local function attachLocalOrbit(character)
+    destroyOrbit(orbitData, true)
+    orbitData = nil
+    if not character or not character:FindFirstChild("Head") then return false end
+    local folder = Instance.new("Folder")
+    folder.Name = "LocalLimbOrbitVisuals"
+    folder.Parent = workspace
+    orbitData = constructOrbit(character, folder, true)
+    if not orbitData then
+        folder:Destroy()
+        return false
+    end
+    return true
+end
+
+local function startLocalOrbit()
+    if orbitConnection then return true end
+    if not attachLocalOrbit(LocalPlayer.Character) then
+        StatusLabel.Text = "找不到四肢；請確認角色已載入"
+        return false
+    end
+    orbitElapsed = 0
+    orbitConnection = RunService.RenderStepped:Connect(function(dt)
+        if not orbitEnabled then return end
+        if not orbitData or LocalPlayer.Character ~= orbitData.character then
+            if not attachLocalOrbit(LocalPlayer.Character) then return end
+        end
+        orbitElapsed += math.min(dt, 0.1)
+        renderOrbit(orbitData, orbitElapsed, orbitRadius, orbitSpeed, orbitWobble, limbSelfSpin)
+    end)
+    return true
+end
+
+local serverOrbitEvent = ReplicatedStorage:FindFirstChild("LimbOrbitToggleEvent")
+if serverOrbitEvent and (not serverOrbitEvent:IsA("RemoteEvent")
+    or serverOrbitEvent:GetAttribute("LimbOrbitServerReady") ~= true) then
+    serverOrbitEvent = nil
+end
+
+if serverOrbitEvent then
+    serverOrbitEvent.OnClientEvent:Connect(function(enabled, success, message)
+        if not success then
+            orbitEnabled = false
+        else
+            orbitEnabled = enabled
+        end
+        showOrbitState(orbitEnabled)
+        if type(message) == "string" then StatusLabel.Text = message end
     end)
 end
 
-SpinButton.MouseButton1Click:Connect(function()
-    if spinEnabled then
-        stopHeadBodySpin()
-        StatusLabel.Text = "頭身分離旋轉已關閉"
-    else
-        startHeadBodySpin()
+OrbitButton.MouseButton1Click:Connect(function()
+    local desired = not orbitEnabled
+    if serverOrbitEvent and serverOrbitEvent.Parent == ReplicatedStorage then
+        -- 僅在遊戲擁有伺服器配套程式時能讓其他玩家一起看到。
+        usingServerOrbit = true
+        stopLocalOrbit()
+        serverOrbitEvent:FireServer(desired)
+        StatusLabel.Text = "已送出外觀切換請求"
+        return
     end
+
+    usingServerOrbit = false
+    if desired then
+        orbitEnabled = true
+        if not startLocalOrbit() then
+            orbitEnabled = false
+            return
+        end
+        StatusLabel.Text = "四肢繞頭已開啟（僅自己可見）"
+    else
+        orbitEnabled = false
+        stopLocalOrbit()
+        StatusLabel.Text = "四肢繞頭已關閉"
+    end
+    showOrbitState(orbitEnabled)
 end)
 
--- 避免腳本重複執行時留下上一版的旋轉連線與變形。
-ScreenGui.Destroying:Connect(stopHeadBodySpin)
+ScreenGui.Destroying:Connect(function()
+    if usingServerOrbit and serverOrbitEvent and serverOrbitEvent.Parent then
+        serverOrbitEvent:FireServer(false)
+    end
+    orbitEnabled = false
+    stopLocalOrbit()
+end)
 
 local dragging = false
 local dragStart
