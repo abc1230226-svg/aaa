@@ -1,5 +1,3 @@
--- 版本：以 fly to people (1).lua 為底稿，新增原生 Animator 動畫測試。
--- 不改動原本的飛行/TP/玩家列表/捲動機制。
 local Players = game:GetService("Players")
 local UserInputService = game:GetService("UserInputService")
 local RunService = game:GetService("RunService")
@@ -48,6 +46,31 @@ local followConnection = nil
 
 local lastUseTime = 0
 local cooldown = 0.35
+
+-- ===== 行走速度設定 (與飛行速度獨立) =====
+local walkSpeed = 50 -- 啟動時的 WalkSpeed；原廠常見預設為 16
+
+local function applyWalkSpeed(value)
+    local num = tonumber(value)
+    if not num or num ~= num or num == math.huge or num == -math.huge then
+        return false
+    end
+    walkSpeed = math.max(0, math.floor(num + 0.5))
+    local character = LocalPlayer.Character
+    local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+    if humanoid then
+        humanoid.WalkSpeed = walkSpeed
+    end
+    return true
+end
+
+-- 重生後沿用目前設定的行走速度
+LocalPlayer.CharacterAdded:Connect(function(character)
+    local humanoid = character:WaitForChild("Humanoid", 10)
+    if humanoid then
+        humanoid.WalkSpeed = walkSpeed
+    end
+end)
 
 local ToggleButton = Instance.new("TextButton")
 ToggleButton.Size = UDim2.new(0, 75, 0, 35)
@@ -201,6 +224,82 @@ createSpeedButton("中 250", 250, 86)
 createSpeedButton("快 500", 500, 164)
 createSpeedButton("超快 1000", 1000, 242)
 
+-- ===== 新增：可直接輸入的行走速度控制列 =====
+local WalkFrame = Instance.new("Frame")
+WalkFrame.Size = UDim2.new(1, -12, 0, 34)
+WalkFrame.Position = UDim2.new(0, 6, 0, 112)
+WalkFrame.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+WalkFrame.BorderSizePixel = 0
+WalkFrame.Parent = MainFrame
+addCorner(WalkFrame, 8)
+
+local WalkLabel = Instance.new("TextLabel")
+WalkLabel.Size = UDim2.new(0, 82, 0, 26)
+WalkLabel.Position = UDim2.new(0, 8, 0, 4)
+WalkLabel.BackgroundTransparency = 1
+WalkLabel.TextColor3 = Color3.new(1, 1, 1)
+WalkLabel.TextSize = 14
+WalkLabel.Font = Enum.Font.SourceSansBold
+WalkLabel.TextXAlignment = Enum.TextXAlignment.Left
+WalkLabel.Text = "行走速度"
+WalkLabel.Parent = WalkFrame
+
+local WalkInput = Instance.new("TextBox")
+WalkInput.Size = UDim2.new(0, 68, 0, 26)
+WalkInput.Position = UDim2.new(0, 92, 0, 4)
+WalkInput.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
+WalkInput.TextColor3 = Color3.fromRGB(255, 255, 255)
+WalkInput.TextSize = 15
+WalkInput.Font = Enum.Font.SourceSansBold
+WalkInput.Text = tostring(walkSpeed)
+WalkInput.ClearTextOnFocus = false
+WalkInput.Parent = WalkFrame
+addCorner(WalkInput, 5)
+
+local function makeWalkButton(label, x, width)
+    local btn = Instance.new("TextButton")
+    btn.Size = UDim2.new(0, width, 0, 26)
+    btn.Position = UDim2.new(0, x, 0, 4)
+    btn.BackgroundColor3 = Color3.fromRGB(55, 55, 55)
+    btn.TextColor3 = Color3.new(1, 1, 1)
+    btn.TextSize = 14
+    btn.Font = Enum.Font.SourceSansBold
+    btn.Text = label
+    btn.Parent = WalkFrame
+    addCorner(btn, 5)
+    return btn
+end
+
+local WalkDown = makeWalkButton("-", 166, 32)
+local WalkUp = makeWalkButton("+", 204, 32)
+local WalkReset = makeWalkButton("預設 16", 242, 94)
+
+local function refreshWalkInput()
+    WalkInput.Text = tostring(walkSpeed)
+end
+
+WalkDown.MouseButton1Click:Connect(function()
+    applyWalkSpeed(walkSpeed - 10)
+    refreshWalkInput()
+end)
+
+WalkUp.MouseButton1Click:Connect(function()
+    applyWalkSpeed(walkSpeed + 10)
+    refreshWalkInput()
+end)
+
+WalkReset.MouseButton1Click:Connect(function()
+    applyWalkSpeed(16)
+    refreshWalkInput()
+end)
+
+WalkInput.FocusLost:Connect(function()
+    applyWalkSpeed(WalkInput.Text) -- 非數字時保留原設定
+    refreshWalkInput()
+end)
+
+applyWalkSpeed(walkSpeed)
+
 
 local StatusLabel = Instance.new("TextLabel")
 StatusLabel.Size = UDim2.new(1, -12, 0, 26)
@@ -213,8 +312,8 @@ StatusLabel.Text = "選擇一個玩家"
 StatusLabel.Parent = MainFrame
 
 local PlayerList = Instance.new("ScrollingFrame")
-PlayerList.Size = UDim2.new(1, -12, 1, -150)
-PlayerList.Position = UDim2.new(0, 6, 0, 114)
+PlayerList.Size = UDim2.new(1, -12, 1, -188)
+PlayerList.Position = UDim2.new(0, 6, 0, 152)
 PlayerList.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
 PlayerList.BorderSizePixel = 0
 
@@ -240,138 +339,6 @@ UIPadding.PaddingLeft = UDim.new(0, 6)
 UIPadding.PaddingRight = UDim.new(0, 6)
 UIPadding.PaddingBottom = UDim.new(0, 6)
 UIPadding.Parent = PlayerList
-
-
--- ===== 原生 Animator 動畫（無需新增伺服器 Script） =====
--- 注意：內建 ID 是「舞蹈測試」，不是四肢拆開繞頭的專用動畫。
--- 如果你有自行發布且此遊戲有權限使用的特殊動畫，把 ID 填入 CUSTOM_ANIMATION_ID。
-local CUSTOM_ANIMATION_ID = ""         -- 例："rbxassetid://1234567890"
-local R15_TEST_ANIMATION = "rbxassetid://507771019"  -- Roblox R15 內建舞蹈
-local R6_TEST_ANIMATION = "rbxassetid://182435998"   -- Roblox R6 內建舞蹈
-local SYNC_ANIMATION_SPEED = 2.5         -- 倍速，不是「每秒幾圈」
-
--- 主介面底部增加一個按鈕，讓左側狀態文字保留空間。
-StatusLabel.Size = UDim2.new(1, -145, 0, 26)
-StatusLabel.TextXAlignment = Enum.TextXAlignment.Left
-StatusLabel.TextTruncate = Enum.TextTruncate.AtEnd
-
-local SyncAnimButton = Instance.new("TextButton")
-SyncAnimButton.Name = "NativeAnimationToggle"
-SyncAnimButton.Size = UDim2.new(0, 126, 0, 26)
-SyncAnimButton.Position = UDim2.new(1, -132, 1, -32)
-SyncAnimButton.BackgroundColor3 = Color3.fromRGB(65, 65, 100)
-SyncAnimButton.TextColor3 = Color3.fromRGB(255, 255, 255)
-SyncAnimButton.TextSize = 12
-SyncAnimButton.Font = Enum.Font.SourceSansBold
-SyncAnimButton.Text = "原生動畫：關"
-SyncAnimButton.Parent = MainFrame
-addCorner(SyncAnimButton, 6)
-
-local currentAnimationTrack = nil
-local currentAnimationObject = nil
-local currentAnimationCharacter = nil
-local animationEnabled = false
-
-local function stopNativeAnimation()
-    animationEnabled = false
-    if currentAnimationTrack then
-        pcall(function() currentAnimationTrack:Stop(0.15) end)
-        pcall(function() currentAnimationTrack:Destroy() end)
-        currentAnimationTrack = nil
-    end
-    if currentAnimationObject then
-        currentAnimationObject:Destroy()
-        currentAnimationObject = nil
-    end
-    currentAnimationCharacter = nil
-    SyncAnimButton.Text = "原生動畫：關"
-    SyncAnimButton.BackgroundColor3 = Color3.fromRGB(65, 65, 100)
-end
-
-local function startNativeAnimation()
-    local character = LocalPlayer.Character
-    local humanoid = character and character:FindFirstChildOfClass("Humanoid")
-    if not character or not humanoid then
-        StatusLabel.Text = "找不到自己的角色"
-        return
-    end
-
-    -- 不可在本機自行建立 Animator；本機建的 Animator 不會同步動畫。
-    local animator = humanoid:FindFirstChildOfClass("Animator")
-    if not animator then
-        StatusLabel.Text = "缺少可同步的 Animator"
-        return
-    end
-
-    local rigIsR15 = humanoid.RigType == Enum.HumanoidRigType.R15
-    local selectedId = CUSTOM_ANIMATION_ID
-    if selectedId == "" then
-        selectedId = rigIsR15 and R15_TEST_ANIMATION or R6_TEST_ANIMATION
-    end
-    -- 可接受純數字 ID，或 rbxassetid:// 開頭的 ID。
-    if tostring(selectedId):match("^%d+$") then
-        selectedId = "rbxassetid://" .. tostring(selectedId)
-    end
-
-    local animation = Instance.new("Animation")
-    animation.Name = "NativeSyncAnimation"
-    animation.AnimationId = selectedId
-
-    local ok, trackOrError = pcall(function()
-        return animator:LoadAnimation(animation)
-    end)
-    if not ok or not trackOrError then
-        animation:Destroy()
-        StatusLabel.Text = "動畫載入失敗，檢查 ID / 權限"
-        warn("Native animation load failed:", trackOrError)
-        return
-    end
-
-    local track = trackOrError
-    local played, playError = pcall(function()
-        track.Priority = Enum.AnimationPriority.Action4
-        track.Looped = true
-        track:Play(0.15, 1, SYNC_ANIMATION_SPEED)
-    end)
-    if not played then
-        warn("Native animation play failed:", playError)
-        pcall(function() track:Destroy() end)
-        animation:Destroy()
-        StatusLabel.Text = "無法播放動畫"
-        return
-    end
-
-    currentAnimationObject = animation
-    currentAnimationTrack = track
-    currentAnimationCharacter = character
-    animationEnabled = true
-    SyncAnimButton.Text = "原生動畫：開"
-    SyncAnimButton.BackgroundColor3 = Color3.fromRGB(50, 115, 65)
-    StatusLabel.Text = (CUSTOM_ANIMATION_ID == "") and "原生舞蹈測試中" or "自訂動畫播放中"
-
-    -- Animator:LoadAnimation 可能先回傳 Track，但資產稍後才下載；偵測明顯載入問題。
-    task.delay(5, function()
-        if animationEnabled and currentAnimationTrack == track and track.Length == 0 then
-            StatusLabel.Text = "動畫無長度：可能無權限或 ID 無效"
-            warn("Animation track has zero length: ", selectedId)
-        end
-    end)
-end
-
-SyncAnimButton.MouseButton1Click:Connect(function()
-    if animationEnabled then
-        stopNativeAnimation()
-        StatusLabel.Text = "已停止原生動畫"
-    else
-        startNativeAnimation()
-    end
-end)
-
-LocalPlayer.CharacterRemoving:Connect(function(character)
-    if currentAnimationCharacter == character then
-        stopNativeAnimation()
-    end
-end)
 
 
 local dragging = false
