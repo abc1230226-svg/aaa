@@ -215,11 +215,11 @@ ScreenGui.Destroying:Connect(function()
     if walkCharacterConnection then walkCharacterConnection:Disconnect() end
 end)
 
--- ===== 射擊間隔（客戶端 Hook，僅針對目前裝備的 Tool） =====
--- 這是通用的最佳努力版本：只攔截 Tool / 子物件的數字屬性與 NumberValue 讀取。
--- 遊戲如使用 ModuleScript 私有變數、task.wait、或伺服器判定，則不一定有效。
-local fireInterval = 0.10 -- 每次射擊間隔（秒）；0.10 秒 = 理論 600 RPM
-local fireStateKey = "__fly_to_people_fire_interval_hook_v1"
+-- ===== 射擊間隔 v2：提前監控 Backpack/Character，避免錯過裝備瞬間讀取 =====
+-- 本功能只攔截 Roblox Instance 的 NumberValue/IntValue.Value 和 Attribute 讀取。
+-- Lua 區域變數/ModuleScript table/伺服器槍械冷卻不在此 Hook 範圍。
+local fireInterval = 0.10
+local fireStateKey = "__fly_to_people_fire_hook_v2"
 local fireState = hookEnv and hookEnv[fireStateKey] or nil
 if type(fireState) ~= "table" then
     fireState = {
@@ -229,6 +229,8 @@ if type(fireState) ~= "table" then
         tool = nil,
         candidates = 0,
         readHits = 0,
+        observedValueReads = 0,
+        shotSignals = 0,
         indexInstalled = false,
         namecallInstalled = false,
     }
@@ -240,13 +242,22 @@ fireState.tool = nil
 fireState.members = setmetatable({}, {__mode = "k"})
 fireState.candidates = 0
 fireState.readHits = 0
+fireState.observedValueReads = 0
+fireState.shotSignals = 0
 
--- 不要攔截所有 task.wait / RemoteEvent，避免破壞其它功能。
+local fireConnections = {}
+local registeredFireTools = setmetatable({}, {__mode = "k"})
+local function addFireConnection(conn)
+    table.insert(fireConnections, conn)
+    return conn
+end
+
 local intervalKeys = {
     firedelay=true, fireinterval=true, shotdelay=true, shotinterval=true,
     shootdelay=true, shootinterval=true, timebetweenshots=true,
     shotcooldown=true, shootcooldown=true, firecooldown=true,
-    weaponcooldown=true, bulletsdelay=true,
+    weaponcooldown=true, bulletsdelay=true, attackdelay=true,
+    attackinterval=true, firewait=true,
 }
 local rpmKeys = {rpm=true, roundsperminute=true}
 local perSecondKeys = {shotspersecond=true, roundspersecond=true, shotspersec=true}
@@ -269,8 +280,7 @@ local function fireValueFor(key, original)
     elseif perSecondKeys[name] then
         return 1 / interval
     elseif ambiguousKeys[name] then
-        -- 各遊戲對 FireRate 的單位定義不同，根據原值推測：
-        -- >=30：RPM；2~30：每秒次數；<2：秒/發。
+        -- FireRate 不是 Roblox 標準單位，各遊戲可能有不同定義
         if original >= 30 then return 60 / interval end
         if original >= 2 then return 1 / interval end
         return interval
@@ -278,17 +288,48 @@ local function fireValueFor(key, original)
     return nil
 end
 
+local function registerFireTool(tool)
+    if not tool or not tool:IsA("Tool") or registeredFireTools[tool] then return end
+    registeredFireTools[tool] = true
+
+    local function remember(inst)
+        fireState.members[inst] = true
+    end
+    remember(tool)
+    for _, descendant in ipairs(tool:GetDescendants()) do
+        remember(descendant)
+    end
+    addFireConnection(tool.DescendantAdded:Connect(remember))
+    addFireConnection(tool.Activated:Connect(function()
+        if LocalPlayer.Character and tool.Parent == LocalPlayer.Character then
+            fireState.shotSignals += 1
+        end
+    end))
+    -- 預先處理 Backpack 內的槍，裝備瞬間不必等 0.6 秒才登記
+end
+
+local function registerFireContainer(container)
+    if not container then return end
+    for _, child in ipairs(container:GetChildren()) do
+        if child:IsA("Tool") then registerFireTool(child) end
+    end
+    addFireConnection(container.ChildAdded:Connect(function(child)
+        if child:IsA("Tool") then
+            registerFireTool(child)
+        end
+    end))
+end
+
 local function refreshEquippedFireTool()
     local character = LocalPlayer.Character
     local tool = character and character:FindFirstChildOfClass("Tool")
+    if tool then registerFireTool(tool) end
     if tool == fireState.tool then return end
     fireState.tool = tool
-    fireState.members = setmetatable({}, {__mode = "k"})
     fireState.candidates = 0
     if not tool then return end
 
-    local function register(inst)
-        fireState.members[inst] = true
+    local function countCandidate(inst)
         if inst:IsA("NumberValue") or inst:IsA("IntValue") then
             if fireValueFor(inst.Name, inst.Value) ~= nil then
                 fireState.candidates += 1
@@ -300,10 +341,11 @@ local function refreshEquippedFireTool()
             end
         end
     end
-    register(tool)
+    countCandidate(tool)
     for _, descendant in ipairs(tool:GetDescendants()) do
-        register(descendant)
+        countCandidate(descendant)
     end
+    print("[射擊間隔診斷] 已裝備：" .. tool.Name .. "; 可辨識欄位：" .. fireState.candidates)
 end
 
 local function isOtherLocalScript()
@@ -314,53 +356,56 @@ end
 
 local function installFireIntervalHooks()
     if type(hookmetamethod) ~= "function" then
-        warn("[射擊間隔] 不支援 hookmetamethod，無法安裝通用攔截")
+        warn("[射擊間隔] 執行環境沒有 hookmetamethod")
         return
     end
     if not fireState.indexInstalled then
         local oldIndex
         local function indexed(self, property)
-            if fireState.enabled and property == "Value" and fireState.members[self]
-                and isOtherLocalScript() then
-                local original = oldIndex(self, property)
-                local name = oldIndex(self, "Name")
-                local replacement = fireValueFor(name, original)
-                if replacement ~= nil then
-                    fireState.readHits += 1
-                    return replacement
+            if fireState.members[self] and property == "Value" and isOtherLocalScript() then
+                fireState.observedValueReads += 1
+                if fireState.enabled then
+                    local original = oldIndex(self, property)
+                    local name = oldIndex(self, "Name")
+                    local changed = fireValueFor(name, original)
+                    if changed ~= nil then
+                        fireState.readHits += 1
+                        return changed
+                    end
+                    return original
                 end
             end
             return oldIndex(self, property)
         end
         local replacement = indexed
         if type(newcclosure) == "function" then
-            local ok, result = pcall(newcclosure, indexed)
-            if ok then replacement = result end
+            local ok, val = pcall(newcclosure, indexed)
+            if ok then replacement = val end
         end
-        local ok, result = pcall(function()
+        local ok, old = pcall(function()
             return hookmetamethod(game, "__index", replacement)
         end)
-        if ok and type(result) == "function" then
-            oldIndex = result
+        if ok and type(old) == "function" then
+            oldIndex = old
             fireState.indexInstalled = true
         else
-            warn("[射擊間隔] __index Hook 安裝失敗：", result)
+            warn("[射擊間隔] __index Hook 安裝失敗", old)
         end
     end
 
     if not fireState.namecallInstalled and type(getnamecallmethod) == "function" then
         local oldNamecall
         local function named(self, ...)
-            if fireState.enabled and fireState.members[self] and isOtherLocalScript() then
+            if fireState.members[self] and fireState.enabled and isOtherLocalScript() then
                 local method = getnamecallmethod()
                 if method == "GetAttribute" then
                     local name = select(1, ...)
                     if type(name) == "string" then
                         local original = oldNamecall(self, ...)
-                        local replacement = fireValueFor(name, original)
-                        if replacement ~= nil then
+                        local changed = fireValueFor(name, original)
+                        if changed ~= nil then
                             fireState.readHits += 1
-                            return replacement
+                            return changed
                         end
                         return original
                     end
@@ -368,9 +413,9 @@ local function installFireIntervalHooks()
                     local all = oldNamecall(self, ...)
                     if type(all) == "table" then
                         for name, original in pairs(all) do
-                            local replacement = fireValueFor(name, original)
-                            if replacement ~= nil then
-                                all[name] = replacement
+                            local changed = fireValueFor(name, original)
+                            if changed ~= nil then
+                                all[name] = changed
                                 fireState.readHits += 1
                             end
                         end
@@ -382,27 +427,82 @@ local function installFireIntervalHooks()
         end
         local replacement = named
         if type(newcclosure) == "function" then
-            local ok, result = pcall(newcclosure, named)
-            if ok then replacement = result end
+            local ok, val = pcall(newcclosure, named)
+            if ok then replacement = val end
         end
-        local ok, result = pcall(function()
+        local ok, old = pcall(function()
             return hookmetamethod(game, "__namecall", replacement)
         end)
-        if ok and type(result) == "function" then
-            oldNamecall = result
+        if ok and type(old) == "function" then
+            oldNamecall = old
             fireState.namecallInstalled = true
         else
-            warn("[射擊間隔] __namecall Hook 安裝失敗：", result)
+            warn("[射擊間隔] __namecall Hook 安裝失敗", old)
         end
     end
-    print("[射擊間隔] Hook 已設置，裝備 Tool 時會檢查常見的射擊間隔設定")
+    print("[射擊間隔] v2 已安裝；會預先登記背包內 Tool，以免錯過剛裝備時的讀取")
 end
 
+-- 在安裝 Hook 前先把既有 Tool 登記好
+local backpack = LocalPlayer:FindFirstChildOfClass("Backpack")
+if backpack then registerFireContainer(backpack) end
+addFireConnection(LocalPlayer.ChildAdded:Connect(function(child)
+    if child:IsA("Backpack") then registerFireContainer(child) end
+end))
+if LocalPlayer.Character then registerFireContainer(LocalPlayer.Character) end
+addFireConnection(LocalPlayer.CharacterAdded:Connect(function(character)
+    registerFireContainer(character)
+    task.defer(refreshEquippedFireTool)
+end))
 installFireIntervalHooks()
 refreshEquippedFireTool()
--- 舊版腳本被取代時停用舊 Hook，避免重複干擾。
+
+local function reportFireDiagnostics()
+    refreshEquippedFireTool()
+    local tool = fireState.tool
+    if not tool then
+        warn("[射擊間隔診斷] 角色未裝備 Roblox Tool；若是自訂武器系統，這版無法自動識別其冷卻設定")
+        return
+    end
+    print("[射擊間隔診斷] 武器：", tool.Name,
+        "候選欄位：", fireState.candidates,
+        "攔截讀取：", fireState.readHits,
+        "觀察 Value 讀取：", fireState.observedValueReads,
+        "Tool.Activated 事件：", fireState.shotSignals)
+    local moduleCount = 0
+    local scripts = 0
+    local paths = {}
+    local function inspect(inst)
+        if inst:IsA("ModuleScript") then moduleCount += 1 end
+        if inst:IsA("LocalScript") then scripts += 1 end
+        if inst:IsA("NumberValue") or inst:IsA("IntValue") then
+            local value = inst.Value
+            if fireValueFor(inst.Name, value) ~= nil then
+                table.insert(paths, inst:GetFullName() .. ".Value = " .. tostring(value))
+            end
+        end
+        for name, value in pairs(inst:GetAttributes()) do
+            if fireValueFor(name, value) ~= nil then
+                table.insert(paths, inst:GetFullName() .. " [" .. name .. "] = " .. tostring(value))
+            end
+        end
+    end
+    inspect(tool)
+    for _, inst in ipairs(tool:GetDescendants()) do inspect(inst) end
+    print("[射擊間隔診斷] ModuleScript 數量：", moduleCount, "LocalScript 數量：", scripts)
+    if #paths == 0 then
+        warn("[射擊間隔診斷] 沒有找到可辨識的射速欄位，可能使用 ModuleScript table、區域變數或伺服器計時")
+    else
+        for i = 1, math.min(#paths, 30) do
+            print("[射擊間隔診斷] 欄位", i, paths[i])
+        end
+    end
+end
+
 ScreenGui.Destroying:Connect(function()
     fireState.enabled = false
+    for _, conn in ipairs(fireConnections) do conn:Disconnect() end
+    table.clear(fireConnections)
 end)
 
 local ToggleButton = Instance.new("TextButton")
@@ -727,7 +827,7 @@ end)
 
 -- ===== 新增：射擊間隔控制列（僅客戶端槍械設定） =====
 local FireFrame = Instance.new("Frame")
-FireFrame.Size = UDim2.new(1, -12, 0, 58)
+FireFrame.Size = UDim2.new(1, -12, 0, 78)
 FireFrame.Position = UDim2.new(0, 6, 0, 186)
 FireFrame.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
 FireFrame.BorderSizePixel = 0
@@ -784,8 +884,23 @@ FireDetail.TextColor3 = Color3.fromRGB(200, 200, 200)
 FireDetail.TextSize = 11
 FireDetail.Font = Enum.Font.SourceSans
 FireDetail.TextXAlignment = Enum.TextXAlignment.Left
-FireDetail.Text = "等待裝備槍械 Tool..."
+FireDetail.Text = "先裝備槍，再測試開火..."
 FireDetail.Parent = FireFrame
+
+local FireStatus = Instance.new("TextLabel")
+FireStatus.Size = UDim2.new(1, -83, 0, 21)
+FireStatus.Position = UDim2.new(0, 8, 0, 54)
+FireStatus.BackgroundTransparency = 1
+FireStatus.TextColor3 = Color3.fromRGB(190, 190, 190)
+FireStatus.TextSize = 11
+FireStatus.Font = Enum.Font.SourceSans
+FireStatus.TextXAlignment = Enum.TextXAlignment.Left
+FireStatus.Text = "檢查是否為 Tool/ModuleScript/伺服器冷卻"
+FireStatus.Parent = FireFrame
+
+local DiagnoseFire = fireButton("診斷", 288, 52)
+DiagnoseFire.Position = UDim2.new(0, 288, 0, 51)
+DiagnoseFire.MouseButton1Click:Connect(reportFireDiagnostics)
 
 local function updateFireInterval(newValue)
     local n = tonumber(newValue)
@@ -818,16 +933,20 @@ end)
 local fireStatusElapsed = 0
 local fireStatusConnection = RunService.Heartbeat:Connect(function(dt)
     fireStatusElapsed += dt
-    if fireStatusElapsed < 0.6 then return end
+    if fireStatusElapsed < 0.4 then return end
     fireStatusElapsed = 0
     refreshEquippedFireTool()
     if not fireState.indexInstalled and not fireState.namecallInstalled then
-        FireDetail.Text = "執行環境不支援 Hook；此功能無法運作"
+        FireDetail.Text = "未安裝 Hook：執行環境不支援"
+        FireStatus.Text = "此功能無法運作"
     elseif not fireState.tool then
-        FireDetail.Text = "尚未裝備 Tool｜攔截讀取 " .. fireState.readHits
+        FireDetail.Text = "目前沒有偵測到裝備的 Tool"
+        FireStatus.Text = "若你拿著槍，可能是自訂武器系統"
     else
-        FireDetail.Text = string.format("%s｜偵測欄位 %d｜攔截讀取 %d",
+        FireDetail.Text = string.format("%s｜欄位 %d｜攔截 %d",
             fireState.tool.Name, fireState.candidates, fireState.readHits)
+        FireStatus.Text = string.format("開火事件 %d｜Value讀取 %d",
+            fireState.shotSignals, fireState.observedValueReads)
     end
 end)
 ScreenGui.Destroying:Connect(function()
@@ -845,8 +964,8 @@ StatusLabel.Text = "選擇一個玩家"
 StatusLabel.Parent = MainFrame
 
 local PlayerList = Instance.new("ScrollingFrame")
-PlayerList.Size = UDim2.new(1, -12, 1, -294)
-PlayerList.Position = UDim2.new(0, 6, 0, 258)
+PlayerList.Size = UDim2.new(1, -12, 1, -314)
+PlayerList.Position = UDim2.new(0, 6, 0, 278)
 PlayerList.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
 PlayerList.BorderSizePixel = 0
 
