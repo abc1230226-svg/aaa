@@ -215,296 +215,6 @@ ScreenGui.Destroying:Connect(function()
     if walkCharacterConnection then walkCharacterConnection:Disconnect() end
 end)
 
--- ===== 射擊間隔 v2：提前監控 Backpack/Character，避免錯過裝備瞬間讀取 =====
--- 本功能只攔截 Roblox Instance 的 NumberValue/IntValue.Value 和 Attribute 讀取。
--- Lua 區域變數/ModuleScript table/伺服器槍械冷卻不在此 Hook 範圍。
-local fireInterval = 0.10
-local fireStateKey = "__fly_to_people_fire_hook_v2"
-local fireState = hookEnv and hookEnv[fireStateKey] or nil
-if type(fireState) ~= "table" then
-    fireState = {
-        enabled = true,
-        interval = fireInterval,
-        members = setmetatable({}, {__mode = "k"}),
-        tool = nil,
-        candidates = 0,
-        readHits = 0,
-        observedValueReads = 0,
-        shotSignals = 0,
-        indexInstalled = false,
-        namecallInstalled = false,
-    }
-    if hookEnv then hookEnv[fireStateKey] = fireState end
-end
-fireState.enabled = true
-fireState.interval = fireInterval
-fireState.tool = nil
-fireState.members = setmetatable({}, {__mode = "k"})
-fireState.candidates = 0
-fireState.readHits = 0
-fireState.observedValueReads = 0
-fireState.shotSignals = 0
-
-local fireConnections = {}
-local registeredFireTools = setmetatable({}, {__mode = "k"})
-local function addFireConnection(conn)
-    table.insert(fireConnections, conn)
-    return conn
-end
-
-local intervalKeys = {
-    firedelay=true, fireinterval=true, shotdelay=true, shotinterval=true,
-    shootdelay=true, shootinterval=true, timebetweenshots=true,
-    shotcooldown=true, shootcooldown=true, firecooldown=true,
-    weaponcooldown=true, bulletsdelay=true, attackdelay=true,
-    attackinterval=true, firewait=true,
-}
-local rpmKeys = {rpm=true, roundsperminute=true}
-local perSecondKeys = {shotspersecond=true, roundspersecond=true, shotspersec=true}
-local ambiguousKeys = {firerate=true, shootrate=true, rateoffire=true}
-
-local function normalizeFireKey(key)
-    if type(key) ~= "string" then return nil end
-    return (string.lower(key):gsub("[^%w]", ""))
-end
-
-local function fireValueFor(key, original)
-    if type(original) ~= "number" or original ~= original then return nil end
-    local name = normalizeFireKey(key)
-    if not name then return nil end
-    local interval = fireState.interval
-    if intervalKeys[name] then
-        return interval
-    elseif rpmKeys[name] then
-        return 60 / interval
-    elseif perSecondKeys[name] then
-        return 1 / interval
-    elseif ambiguousKeys[name] then
-        -- FireRate 不是 Roblox 標準單位，各遊戲可能有不同定義
-        if original >= 30 then return 60 / interval end
-        if original >= 2 then return 1 / interval end
-        return interval
-    end
-    return nil
-end
-
-local function registerFireTool(tool)
-    if not tool or not tool:IsA("Tool") or registeredFireTools[tool] then return end
-    registeredFireTools[tool] = true
-
-    local function remember(inst)
-        fireState.members[inst] = true
-    end
-    remember(tool)
-    for _, descendant in ipairs(tool:GetDescendants()) do
-        remember(descendant)
-    end
-    addFireConnection(tool.DescendantAdded:Connect(remember))
-    addFireConnection(tool.Activated:Connect(function()
-        if LocalPlayer.Character and tool.Parent == LocalPlayer.Character then
-            fireState.shotSignals += 1
-        end
-    end))
-    -- 預先處理 Backpack 內的槍，裝備瞬間不必等 0.6 秒才登記
-end
-
-local function registerFireContainer(container)
-    if not container then return end
-    for _, child in ipairs(container:GetChildren()) do
-        if child:IsA("Tool") then registerFireTool(child) end
-    end
-    addFireConnection(container.ChildAdded:Connect(function(child)
-        if child:IsA("Tool") then
-            registerFireTool(child)
-        end
-    end))
-end
-
-local function refreshEquippedFireTool()
-    local character = LocalPlayer.Character
-    local tool = character and character:FindFirstChildOfClass("Tool")
-    if tool then registerFireTool(tool) end
-    if tool == fireState.tool then return end
-    fireState.tool = tool
-    fireState.candidates = 0
-    if not tool then return end
-
-    local function countCandidate(inst)
-        if inst:IsA("NumberValue") or inst:IsA("IntValue") then
-            if fireValueFor(inst.Name, inst.Value) ~= nil then
-                fireState.candidates += 1
-            end
-        end
-        for attrName, value in pairs(inst:GetAttributes()) do
-            if fireValueFor(attrName, value) ~= nil then
-                fireState.candidates += 1
-            end
-        end
-    end
-    countCandidate(tool)
-    for _, descendant in ipairs(tool:GetDescendants()) do
-        countCandidate(descendant)
-    end
-    print("[射擊間隔診斷] 已裝備：" .. tool.Name .. "; 可辨識欄位：" .. fireState.candidates)
-end
-
-local function isOtherLocalScript()
-    if type(checkcaller) ~= "function" then return true end
-    local ok, own = pcall(checkcaller)
-    return not (ok and own == true)
-end
-
-local function installFireIntervalHooks()
-    if type(hookmetamethod) ~= "function" then
-        warn("[射擊間隔] 執行環境沒有 hookmetamethod")
-        return
-    end
-    if not fireState.indexInstalled then
-        local oldIndex
-        local function indexed(self, property)
-            if fireState.members[self] and property == "Value" and isOtherLocalScript() then
-                fireState.observedValueReads += 1
-                if fireState.enabled then
-                    local original = oldIndex(self, property)
-                    local name = oldIndex(self, "Name")
-                    local changed = fireValueFor(name, original)
-                    if changed ~= nil then
-                        fireState.readHits += 1
-                        return changed
-                    end
-                    return original
-                end
-            end
-            return oldIndex(self, property)
-        end
-        local replacement = indexed
-        if type(newcclosure) == "function" then
-            local ok, val = pcall(newcclosure, indexed)
-            if ok then replacement = val end
-        end
-        local ok, old = pcall(function()
-            return hookmetamethod(game, "__index", replacement)
-        end)
-        if ok and type(old) == "function" then
-            oldIndex = old
-            fireState.indexInstalled = true
-        else
-            warn("[射擊間隔] __index Hook 安裝失敗", old)
-        end
-    end
-
-    if not fireState.namecallInstalled and type(getnamecallmethod) == "function" then
-        local oldNamecall
-        local function named(self, ...)
-            if fireState.members[self] and fireState.enabled and isOtherLocalScript() then
-                local method = getnamecallmethod()
-                if method == "GetAttribute" then
-                    local name = select(1, ...)
-                    if type(name) == "string" then
-                        local original = oldNamecall(self, ...)
-                        local changed = fireValueFor(name, original)
-                        if changed ~= nil then
-                            fireState.readHits += 1
-                            return changed
-                        end
-                        return original
-                    end
-                elseif method == "GetAttributes" then
-                    local all = oldNamecall(self, ...)
-                    if type(all) == "table" then
-                        for name, original in pairs(all) do
-                            local changed = fireValueFor(name, original)
-                            if changed ~= nil then
-                                all[name] = changed
-                                fireState.readHits += 1
-                            end
-                        end
-                    end
-                    return all
-                end
-            end
-            return oldNamecall(self, ...)
-        end
-        local replacement = named
-        if type(newcclosure) == "function" then
-            local ok, val = pcall(newcclosure, named)
-            if ok then replacement = val end
-        end
-        local ok, old = pcall(function()
-            return hookmetamethod(game, "__namecall", replacement)
-        end)
-        if ok and type(old) == "function" then
-            oldNamecall = old
-            fireState.namecallInstalled = true
-        else
-            warn("[射擊間隔] __namecall Hook 安裝失敗", old)
-        end
-    end
-    print("[射擊間隔] v2 已安裝；會預先登記背包內 Tool，以免錯過剛裝備時的讀取")
-end
-
--- 在安裝 Hook 前先把既有 Tool 登記好
-local backpack = LocalPlayer:FindFirstChildOfClass("Backpack")
-if backpack then registerFireContainer(backpack) end
-addFireConnection(LocalPlayer.ChildAdded:Connect(function(child)
-    if child:IsA("Backpack") then registerFireContainer(child) end
-end))
-if LocalPlayer.Character then registerFireContainer(LocalPlayer.Character) end
-addFireConnection(LocalPlayer.CharacterAdded:Connect(function(character)
-    registerFireContainer(character)
-    task.defer(refreshEquippedFireTool)
-end))
-installFireIntervalHooks()
-refreshEquippedFireTool()
-
-local function reportFireDiagnostics()
-    refreshEquippedFireTool()
-    local tool = fireState.tool
-    if not tool then
-        warn("[射擊間隔診斷] 角色未裝備 Roblox Tool；若是自訂武器系統，這版無法自動識別其冷卻設定")
-        return
-    end
-    print("[射擊間隔診斷] 武器：", tool.Name,
-        "候選欄位：", fireState.candidates,
-        "攔截讀取：", fireState.readHits,
-        "觀察 Value 讀取：", fireState.observedValueReads,
-        "Tool.Activated 事件：", fireState.shotSignals)
-    local moduleCount = 0
-    local scripts = 0
-    local paths = {}
-    local function inspect(inst)
-        if inst:IsA("ModuleScript") then moduleCount += 1 end
-        if inst:IsA("LocalScript") then scripts += 1 end
-        if inst:IsA("NumberValue") or inst:IsA("IntValue") then
-            local value = inst.Value
-            if fireValueFor(inst.Name, value) ~= nil then
-                table.insert(paths, inst:GetFullName() .. ".Value = " .. tostring(value))
-            end
-        end
-        for name, value in pairs(inst:GetAttributes()) do
-            if fireValueFor(name, value) ~= nil then
-                table.insert(paths, inst:GetFullName() .. " [" .. name .. "] = " .. tostring(value))
-            end
-        end
-    end
-    inspect(tool)
-    for _, inst in ipairs(tool:GetDescendants()) do inspect(inst) end
-    print("[射擊間隔診斷] ModuleScript 數量：", moduleCount, "LocalScript 數量：", scripts)
-    if #paths == 0 then
-        warn("[射擊間隔診斷] 沒有找到可辨識的射速欄位，可能使用 ModuleScript table、區域變數或伺服器計時")
-    else
-        for i = 1, math.min(#paths, 30) do
-            print("[射擊間隔診斷] 欄位", i, paths[i])
-        end
-    end
-end
-
-ScreenGui.Destroying:Connect(function()
-    fireState.enabled = false
-    for _, conn in ipairs(fireConnections) do conn:Disconnect() end
-    table.clear(fireConnections)
-end)
-
 local ToggleButton = Instance.new("TextButton")
 ToggleButton.Size = UDim2.new(0, 75, 0, 35)
 ToggleButton.Position = UDim2.new(0, 20, 0, 150)
@@ -517,7 +227,7 @@ ToggleButton.Parent = ScreenGui
 addCorner(ToggleButton, 8)
 
 local MainFrame = Instance.new("Frame")
-MainFrame.Size = UDim2.new(0, 360, 0, 500)
+MainFrame.Size = UDim2.new(0, 360, 0, 430)
 MainFrame.Position = UDim2.new(0, 100, 0, 100)
 MainFrame.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
 MainFrame.BackgroundTransparency = 0.08
@@ -825,237 +535,38 @@ ScreenGui.Destroying:Connect(function()
     diagnosticConnection:Disconnect()
 end)
 
--- ===== 新增：射擊間隔控制列（僅客戶端槍械設定） =====
-local FireFrame = Instance.new("Frame")
-FireFrame.Size = UDim2.new(1, -12, 0, 78)
-FireFrame.Position = UDim2.new(0, 6, 0, 186)
-FireFrame.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
-FireFrame.BorderSizePixel = 0
-FireFrame.Parent = MainFrame
-addCorner(FireFrame, 8)
-
-local FireLabel = Instance.new("TextLabel")
-FireLabel.Size = UDim2.new(0, 74, 0, 26)
-FireLabel.Position = UDim2.new(0, 8, 0, 4)
-FireLabel.BackgroundTransparency = 1
-FireLabel.TextColor3 = Color3.new(1, 1, 1)
-FireLabel.Font = Enum.Font.SourceSansBold
-FireLabel.TextSize = 13
-FireLabel.TextXAlignment = Enum.TextXAlignment.Left
-FireLabel.Text = "射擊間隔"
-FireLabel.Parent = FireFrame
-
-local FireInput = Instance.new("TextBox")
-FireInput.Size = UDim2.new(0, 63, 0, 26)
-FireInput.Position = UDim2.new(0, 83, 0, 4)
-FireInput.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
-FireInput.TextColor3 = Color3.new(1, 1, 1)
-FireInput.Font = Enum.Font.SourceSansBold
-FireInput.TextSize = 14
-FireInput.Text = string.format("%.2f", fireInterval)
-FireInput.ClearTextOnFocus = false
-FireInput.Parent = FireFrame
-addCorner(FireInput, 5)
-
-local function fireButton(text, x, width)
-    local button = Instance.new("TextButton")
-    button.Size = UDim2.new(0, width, 0, 26)
-    button.Position = UDim2.new(0, x, 0, 4)
-    button.BackgroundColor3 = Color3.fromRGB(55, 55, 55)
-    button.TextColor3 = Color3.new(1, 1, 1)
-    button.TextSize = 13
-    button.Font = Enum.Font.SourceSansBold
-    button.Text = text
-    button.Parent = FireFrame
-    addCorner(button, 5)
-    return button
-end
-
-local FireDown = fireButton("−", 152, 29)
-local FireUp = fireButton("＋", 185, 29)
-local FireToggle = fireButton("攔截：開", 218, 73)
-local FireReset = fireButton("0.10", 295, 46)
-
-local FireDetail = Instance.new("TextLabel")
-FireDetail.Size = UDim2.new(1, -14, 0, 18)
-FireDetail.Position = UDim2.new(0, 8, 0, 35)
-FireDetail.BackgroundTransparency = 1
-FireDetail.TextColor3 = Color3.fromRGB(200, 200, 200)
-FireDetail.TextSize = 11
-FireDetail.Font = Enum.Font.SourceSans
-FireDetail.TextXAlignment = Enum.TextXAlignment.Left
-FireDetail.Text = "先裝備槍，再測試開火..."
-FireDetail.Parent = FireFrame
-
-local FireStatus = Instance.new("TextLabel")
-FireStatus.Size = UDim2.new(1, -83, 0, 21)
-FireStatus.Position = UDim2.new(0, 8, 0, 54)
-FireStatus.BackgroundTransparency = 1
-FireStatus.TextColor3 = Color3.fromRGB(190, 190, 190)
-FireStatus.TextSize = 11
-FireStatus.Font = Enum.Font.SourceSans
-FireStatus.TextXAlignment = Enum.TextXAlignment.Left
-FireStatus.Text = "檢查是否為 Tool/ModuleScript/伺服器冷卻"
-FireStatus.Parent = FireFrame
-
-local DiagnoseFire = fireButton("診斷", 288, 52)
-DiagnoseFire.Position = UDim2.new(0, 288, 0, 51)
--- 診斷視窗：讓結果直接顯示在 UI，而不必閱讀 F9 主控台。
-local DiagnosticPanel = Instance.new("Frame")
-DiagnosticPanel.Name = "FireDiagnosticPanel"
-DiagnosticPanel.Size = UDim2.new(1, -20, 0, 185)
-DiagnosticPanel.Position = UDim2.new(0, 10, 0.5, -92)
-DiagnosticPanel.BackgroundColor3 = Color3.fromRGB(23, 30, 39)
-DiagnosticPanel.BorderSizePixel = 0
-DiagnosticPanel.Visible = false
-DiagnosticPanel.ZIndex = 30
-DiagnosticPanel.Parent = MainFrame
-addCorner(DiagnosticPanel, 9)
-
-local DiagnosticTitle = Instance.new("TextLabel")
-DiagnosticTitle.Size = UDim2.new(1, -20, 0, 30)
-DiagnosticTitle.Position = UDim2.new(0, 10, 0, 6)
-DiagnosticTitle.BackgroundTransparency = 1
-DiagnosticTitle.TextColor3 = Color3.fromRGB(235, 235, 235)
-DiagnosticTitle.Font = Enum.Font.SourceSansBold
-DiagnosticTitle.TextSize = 17
-DiagnosticTitle.TextXAlignment = Enum.TextXAlignment.Left
-DiagnosticTitle.Text = "射擊間隔診斷結果"
-DiagnosticTitle.ZIndex = 31
-DiagnosticTitle.Parent = DiagnosticPanel
-
-local DiagnosticText = Instance.new("TextLabel")
-DiagnosticText.Size = UDim2.new(1, -20, 0, 105)
-DiagnosticText.Position = UDim2.new(0, 10, 0, 38)
-DiagnosticText.BackgroundTransparency = 1
-DiagnosticText.TextColor3 = Color3.fromRGB(220, 220, 220)
-DiagnosticText.Font = Enum.Font.SourceSans
-DiagnosticText.TextSize = 15
-DiagnosticText.TextWrapped = true
-DiagnosticText.TextXAlignment = Enum.TextXAlignment.Left
-DiagnosticText.TextYAlignment = Enum.TextYAlignment.Top
-DiagnosticText.ZIndex = 31
-DiagnosticText.Parent = DiagnosticPanel
-
-local DiagnosticClose = Instance.new("TextButton")
-DiagnosticClose.Size = UDim2.new(0, 80, 0, 27)
-DiagnosticClose.Position = UDim2.new(1, -90, 1, -34)
-DiagnosticClose.BackgroundColor3 = Color3.fromRGB(65, 84, 106)
-DiagnosticClose.TextColor3 = Color3.fromRGB(255, 255, 255)
-DiagnosticClose.Font = Enum.Font.SourceSansBold
-DiagnosticClose.TextSize = 15
-DiagnosticClose.Text = "關閉"
-DiagnosticClose.ZIndex = 31
-DiagnosticClose.Parent = DiagnosticPanel
-addCorner(DiagnosticClose, 5)
-DiagnosticClose.MouseButton1Click:Connect(function()
-    DiagnosticPanel.Visible = false
-end)
-
-local function displayFireDiagnosis()
-    refreshEquippedFireTool()
-    local description
-    local installed = fireState.indexInstalled or fireState.namecallInstalled
-    if not installed then
-        description = "找不到可使用的 Hook 功能。\n這個版本無法攔截射速設定。"
-    elseif not fireState.tool then
-        description = "沒有偵測到已裝備的 Tool。\n如果槍已經拿在手上，遊戲可能使用自訂槍械系統。"
-    elseif fireState.readHits > 0 then
-        description = "已攔截到部分數值讀取。\n但是否真正提高射速，仍要看遊戲的射擊邏輯。"
-    elseif fireState.candidates == 0 then
-        description = "找不到可辨識的射速欄位。\n射擊間隔可能放在 ModuleScript、區域變數或伺服器。"
-    elseif fireState.observedValueReads == 0 then
-        description = "找到可能的射速欄位，但沒有偵測到 Value 讀取。\n槍械可能透過不同的方式取得設定。"
-    else
-        description = "有讀取數值，但沒有符合名稱的射速欄位被攔截。\n目前 Hook 沒有命中真正的射擊間隔。"
-    end
-    local toolName = fireState.tool and fireState.tool.Name or "未偵測到"
-    local activationText = (fireState.shotSignals > 0) and "有" or "無"
-    DiagnosticText.Text = string.format(
-        "武器：%s｜欄位：%d｜攔截：%d\n%s\nTool 啟動事件：%s（不等於實際開火）",
-        toolName, fireState.candidates, fireState.readHits, description, activationText
-    )
-    DiagnosticPanel.Visible = true
-    -- 更詳細的欄位路徑仍可在 F9 主控台查看。
-    reportFireDiagnostics()
-end
-
-DiagnoseFire.MouseButton1Click:Connect(displayFireDiagnosis)
-
-local function updateFireInterval(newValue)
-    local n = tonumber(newValue)
-    if not n or n ~= n or n == math.huge or n == -math.huge then return end
-    fireInterval = math.clamp(math.floor(n * 1000 + 0.5) / 1000, 0.01, 5)
-    fireState.interval = fireInterval
-    FireInput.Text = string.format("%.3f", fireInterval)
-end
-
-FireInput.FocusLost:Connect(function()
-    updateFireInterval(FireInput.Text)
-    FireInput.Text = string.format("%.3f", fireInterval)
-end)
-FireDown.MouseButton1Click:Connect(function()
-    updateFireInterval(fireInterval - 0.01)
-end)
-FireUp.MouseButton1Click:Connect(function()
-    updateFireInterval(fireInterval + 0.01)
-end)
-FireReset.MouseButton1Click:Connect(function()
-    updateFireInterval(0.10)
-end)
-FireToggle.MouseButton1Click:Connect(function()
-    fireState.enabled = not fireState.enabled
-    FireToggle.Text = fireState.enabled and "攔截：開" or "攔截：關"
-    FireToggle.BackgroundColor3 = fireState.enabled
-        and Color3.fromRGB(55, 88, 55) or Color3.fromRGB(90, 60, 60)
-end)
-
-local fireStatusElapsed = 0
-local fireStatusConnection = RunService.Heartbeat:Connect(function(dt)
-    fireStatusElapsed += dt
-    if fireStatusElapsed < 0.4 then return end
-    fireStatusElapsed = 0
-    refreshEquippedFireTool()
-    if not fireState.indexInstalled and not fireState.namecallInstalled then
-        FireDetail.Text = "未安裝 Hook：執行環境不支援"
-        FireStatus.Text = "此功能無法運作"
-    elseif not fireState.tool then
-        FireDetail.Text = "目前沒有偵測到裝備的 Tool"
-        FireStatus.Text = "若你拿著槍，可能是自訂武器系統"
-    else
-        FireDetail.Text = string.format("%s｜欄位 %d｜攔截 %d",
-            fireState.tool.Name, fireState.candidates, fireState.readHits)
-        FireStatus.Text = string.format("開火事件 %d｜Value讀取 %d",
-            fireState.shotSignals, fireState.observedValueReads)
-    end
-end)
-ScreenGui.Destroying:Connect(function()
-    fireStatusConnection:Disconnect()
-end)
-
--- ===== 敵方玩家 HP 可視化（使用實際複製到客戶端的 Humanoid.Health） =====
--- 本機顯示用，不會修改敵方血量；無可讀 Humanoid 的遊戲可能無法顯示。
+-- ===== 敵方玩家血量顯示：固定像素大小（距離改變不縮放） =====
+-- 這是本機讀取到的 Humanoid.Health；不會修改其他玩家血量。
 local healthVisible = true
-local healthEnemyOnly = true  -- true = 只顯示敵隊；沒有隊伍的遊戲顯示其他所有玩家
-local healthDisplayDistance = 250
-local hpGuiFolderName = "PlayerMarkerFlyLock_HP_Overlays"
-local oldHPFolder = UI_PARENT:FindFirstChild(hpGuiFolderName)
-if oldHPFolder then oldHPFolder:Destroy() end
-local hpGuiFolder = Instance.new("Folder")
-hpGuiFolder.Name = hpGuiFolderName
-hpGuiFolder.Parent = UI_PARENT
+local healthEnemyOnly = true
+local healthDisplayDistance = 250 -- 最遠顯示距離（studs）
+local healthBarWidth = 132        -- 固定螢幕寬度（像素）
+local healthBarHeight = 38        -- 固定螢幕高度（像素）
+local healthHeightAboveHead = 2.35 -- 世界座標：血條顯示在頭上方的距離
+
+-- 血條用獨立的 ScreenGui，確保大小不隨人物與相機距離變動。
+local hpGuiName = "PlayerMarkerFlyLock_HP_Overlays"
+local oldHPGui = UI_PARENT:FindFirstChild(hpGuiName)
+if oldHPGui then oldHPGui:Destroy() end
+local hpScreen = Instance.new("ScreenGui")
+hpScreen.Name = hpGuiName
+hpScreen.ResetOnSpawn = false
+hpScreen.IgnoreGuiInset = true
+hpScreen.DisplayOrder = 1
+hpScreen.Parent = UI_PARENT
+ScreenGui.DisplayOrder = 3 -- 主選單永遠在血條之上
 
 local HealthFrame = Instance.new("Frame")
 HealthFrame.Name = "EnemyHealthControls"
 HealthFrame.Size = UDim2.new(1, -12, 0, 38)
-HealthFrame.Position = UDim2.new(0, 6, 0, 271)
+HealthFrame.Position = UDim2.new(0, 6, 0, 190)
 HealthFrame.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
 HealthFrame.BorderSizePixel = 0
 HealthFrame.Parent = MainFrame
 addCorner(HealthFrame, 8)
 
 local HealthTitle = Instance.new("TextLabel")
-HealthTitle.Size = UDim2.new(0, 84, 1, 0)
+HealthTitle.Size = UDim2.new(0, 86, 1, 0)
 HealthTitle.Position = UDim2.new(0, 8, 0, 0)
 HealthTitle.BackgroundTransparency = 1
 HealthTitle.Text = "敵人血量"
@@ -1066,7 +577,6 @@ HealthTitle.TextXAlignment = Enum.TextXAlignment.Left
 HealthTitle.Parent = HealthFrame
 
 local HealthToggle = Instance.new("TextButton")
-HealthToggle.Name = "HealthToggle"
 HealthToggle.Size = UDim2.new(0, 76, 0, 27)
 HealthToggle.Position = UDim2.new(0, 95, 0, 5)
 HealthToggle.BackgroundColor3 = Color3.fromRGB(52, 104, 63)
@@ -1078,7 +588,6 @@ HealthToggle.Parent = HealthFrame
 addCorner(HealthToggle, 6)
 
 local HealthMode = Instance.new("TextButton")
-HealthMode.Name = "HealthMode"
 HealthMode.Size = UDim2.new(0, 73, 0, 27)
 HealthMode.Position = UDim2.new(0, 177, 0, 5)
 HealthMode.BackgroundColor3 = Color3.fromRGB(55, 70, 94)
@@ -1100,19 +609,19 @@ HealthCount.TextXAlignment = Enum.TextXAlignment.Center
 HealthCount.Text = "0 個血條"
 HealthCount.Parent = HealthFrame
 
-local hpVisuals = {} -- [Player] = {billboard, connections}
-local hpConnections = {}
+local hpVisuals = {}
+local hpPlayerConnections = {}
+local hpGlobalConnections = {}
 local hpActive = true
-
 local function hpTrack(connection)
-    table.insert(hpConnections, connection)
+    table.insert(hpGlobalConnections, connection)
     return connection
 end
 
 local function hpUpdateCount()
     local count = 0
     for _, entry in pairs(hpVisuals) do
-        if entry.billboard and entry.billboard.Parent then count += 1 end
+        if entry.panel and entry.panel.Parent then count += 1 end
     end
     HealthCount.Text = tostring(count) .. " 個血條"
 end
@@ -1134,51 +643,47 @@ local function hpRemove(player)
     for _, connection in ipairs(entry.connections) do
         connection:Disconnect()
     end
-    if entry.billboard then entry.billboard:Destroy() end
+    if entry.panel then entry.panel:Destroy() end
     hpUpdateCount()
 end
 
 local function hpAttach(player, character)
     hpRemove(player)
-    if not hpActive or not hpShouldShow(player) or player.Character ~= character then return end
+    if not hpActive or player.Character ~= character or not hpShouldShow(player) then return end
     local humanoid = character:FindFirstChildOfClass("Humanoid")
     local head = character:FindFirstChild("Head") or character:FindFirstChild("HumanoidRootPart")
     if not humanoid or not head then return end
 
-    local billboard = Instance.new("BillboardGui")
-    billboard.Name = "EnemyHealth_" .. player.UserId
-    billboard.Size = UDim2.new(0, 145, 0, 47)
-    billboard.StudsOffsetWorldSpace = Vector3.new(0, 2.7, 0)
-    billboard.AlwaysOnTop = true
-    billboard.MaxDistance = healthDisplayDistance
-    billboard.Adornee = head
-    billboard.Parent = hpGuiFolder
-
-    local background = Instance.new("Frame")
-    background.Size = UDim2.new(1, 0, 1, 0)
-    background.BackgroundColor3 = Color3.fromRGB(14, 17, 22)
-    background.BackgroundTransparency = 0.2
-    background.BorderSizePixel = 0
-    background.Parent = billboard
-    addCorner(background, 6)
+    local panel = Instance.new("Frame")
+    panel.Name = "Health_" .. tostring(player.UserId)
+    panel.AnchorPoint = Vector2.new(0.5, 1)
+    panel.Size = UDim2.fromOffset(healthBarWidth, healthBarHeight)
+    panel.Position = UDim2.fromOffset(0, 0)
+    panel.BackgroundColor3 = Color3.fromRGB(14, 17, 22)
+    panel.BackgroundTransparency = 0.16
+    panel.BorderSizePixel = 0
+    panel.Visible = false
+    panel.Parent = hpScreen
+    addCorner(panel, 6)
 
     local label = Instance.new("TextLabel")
-    label.Size = UDim2.new(1, -8, 0, 29)
-    label.Position = UDim2.new(0, 4, 0, 1)
+    label.Size = UDim2.new(1, -8, 0, 23)
+    label.Position = UDim2.fromOffset(4, 2)
     label.BackgroundTransparency = 1
-    label.TextSize = 13
+    label.TextSize = 12
     label.Font = Enum.Font.SourceSansBold
+    label.TextScaled = false
+    label.TextTruncate = Enum.TextTruncate.AtEnd
     label.TextStrokeTransparency = 0.5
-    label.TextXAlignment = Enum.TextXAlignment.Center
     label.TextColor3 = Color3.new(1, 1, 1)
-    label.Parent = background
+    label.Parent = panel
 
     local barBack = Instance.new("Frame")
-    barBack.Size = UDim2.new(1, -10, 0, 8)
-    barBack.Position = UDim2.new(0, 5, 1, -13)
+    barBack.Size = UDim2.new(1, -10, 0, 7)
+    barBack.Position = UDim2.new(0, 5, 1, -11)
     barBack.BackgroundColor3 = Color3.fromRGB(74, 75, 76)
     barBack.BorderSizePixel = 0
-    barBack.Parent = background
+    barBack.Parent = panel
     addCorner(barBack, 4)
 
     local bar = Instance.new("Frame")
@@ -1188,10 +693,15 @@ local function hpAttach(player, character)
     bar.Parent = barBack
     addCorner(bar, 4)
 
-    local entry = {billboard = billboard, connections = {}}
+    local entry = {
+        panel = panel,
+        head = head,
+        humanoid = humanoid,
+        connections = {},
+    }
     hpVisuals[player] = entry
 
-    local function update()
+    local function updateHealth()
         if not hpActive or hpVisuals[player] ~= entry then return end
         local maximum = math.max(1, humanoid.MaxHealth)
         local amount = math.clamp(humanoid.Health, 0, maximum)
@@ -1206,10 +716,9 @@ local function hpAttach(player, character)
             bar.BackgroundColor3 = Color3.fromRGB(234, 68, 63)
         end
     end
-
-    table.insert(entry.connections, humanoid.HealthChanged:Connect(update))
-    table.insert(entry.connections, humanoid:GetPropertyChangedSignal("MaxHealth"):Connect(update))
-    update()
+    table.insert(entry.connections, humanoid.HealthChanged:Connect(updateHealth))
+    table.insert(entry.connections, humanoid:GetPropertyChangedSignal("MaxHealth"):Connect(updateHealth))
+    updateHealth()
     hpUpdateCount()
 end
 
@@ -1217,35 +726,39 @@ local function hpRefresh()
     for player in pairs(hpVisuals) do hpRemove(player) end
     if not healthVisible then return end
     for _, player in ipairs(Players:GetPlayers()) do
-        if player ~= LocalPlayer then
-            local character = player.Character
-            if character then hpAttach(player, character) end
+        if player ~= LocalPlayer and player.Character then
+            hpAttach(player, player.Character)
         end
     end
 end
 
 local function hpWatchPlayer(player)
-    if player == LocalPlayer then return end
-    hpTrack(player.CharacterAdded:Connect(function(character)
+    if player == LocalPlayer or hpPlayerConnections[player] then return end
+    local connections = {}
+    hpPlayerConnections[player] = connections
+    local function watchCharacter(character)
         task.spawn(function()
-            local h = character:WaitForChild("Humanoid", 8)
+            local humanoid = character:WaitForChild("Humanoid", 8)
             local head = character:WaitForChild("Head", 8)
-            if h and head and hpActive then hpAttach(player, character) end
+            if humanoid and head and hpActive and player.Character == character then
+                hpAttach(player, character)
+            end
         end)
-    end))
-    hpTrack(player.CharacterRemoving:Connect(function()
+    end
+    table.insert(connections, player.CharacterAdded:Connect(watchCharacter))
+    table.insert(connections, player.CharacterRemoving:Connect(function()
         hpRemove(player)
     end))
-    hpTrack(player:GetPropertyChangedSignal("Team"):Connect(hpRefresh))
-    hpTrack(player:GetPropertyChangedSignal("Neutral"):Connect(hpRefresh))
-    if player.Character then hpAttach(player, player.Character) end
+    table.insert(connections, player:GetPropertyChangedSignal("Team"):Connect(hpRefresh))
+    table.insert(connections, player:GetPropertyChangedSignal("Neutral"):Connect(hpRefresh))
+    if player.Character then watchCharacter(player.Character) end
 end
 
 HealthToggle.MouseButton1Click:Connect(function()
     healthVisible = not healthVisible
     HealthToggle.Text = healthVisible and "顯示：開" or "顯示：關"
-    HealthToggle.BackgroundColor3 = healthVisible and Color3.fromRGB(52, 104, 63)
-        or Color3.fromRGB(99, 58, 58)
+    HealthToggle.BackgroundColor3 = healthVisible
+        and Color3.fromRGB(52, 104, 63) or Color3.fromRGB(99, 58, 58)
     hpRefresh()
 end)
 
@@ -1258,14 +771,53 @@ end)
 hpTrack(LocalPlayer:GetPropertyChangedSignal("Team"):Connect(hpRefresh))
 hpTrack(LocalPlayer:GetPropertyChangedSignal("Neutral"):Connect(hpRefresh))
 hpTrack(Players.PlayerAdded:Connect(hpWatchPlayer))
-hpTrack(Players.PlayerRemoving:Connect(hpRemove))
+hpTrack(Players.PlayerRemoving:Connect(function(player)
+    hpRemove(player)
+    local connections = hpPlayerConnections[player]
+    if connections then
+        for _, connection in ipairs(connections) do connection:Disconnect() end
+        hpPlayerConnections[player] = nil
+    end
+end))
 for _, player in ipairs(Players:GetPlayers()) do hpWatchPlayer(player) end
+
+-- 世界座標轉成螢幕座標：不管敵人遠近，始終顯示 132 x 38 像素。
+local hpRenderConnection = RunService.RenderStepped:Connect(function()
+    if not hpActive then return end
+    local camera = workspace.CurrentCamera
+    if not camera then return end
+    local ownRoot = getRootPart(LocalPlayer)
+    local eyePosition = (ownRoot and ownRoot.Position) or camera.CFrame.Position
+    for player, entry in pairs(hpVisuals) do
+        local panel = entry.panel
+        local head = entry.head
+        if not healthVisible or not panel or not head or not head.Parent
+            or not entry.humanoid or entry.humanoid.Health <= 0 then
+            if panel then panel.Visible = false end
+        else
+            local worldPos = head.Position + Vector3.new(0, healthHeightAboveHead, 0)
+            local screenPoint, onScreen = camera:WorldToViewportPoint(worldPos)
+            local distance = (eyePosition - head.Position).Magnitude
+            if onScreen and screenPoint.Z > 0 and distance <= healthDisplayDistance then
+                panel.Position = UDim2.fromOffset(math.floor(screenPoint.X + 0.5), math.floor(screenPoint.Y + 0.5))
+                panel.Visible = true
+            else
+                panel.Visible = false
+            end
+        end
+    end
+end)
 
 ScreenGui.Destroying:Connect(function()
     hpActive = false
-    for _, connection in ipairs(hpConnections) do connection:Disconnect() end
+    hpRenderConnection:Disconnect()
+    for _, connection in ipairs(hpGlobalConnections) do connection:Disconnect() end
+    for player, connections in pairs(hpPlayerConnections) do
+        for _, connection in ipairs(connections) do connection:Disconnect() end
+        hpPlayerConnections[player] = nil
+    end
     for player in pairs(hpVisuals) do hpRemove(player) end
-    hpGuiFolder:Destroy()
+    if hpScreen then hpScreen:Destroy() end
 end)
 
 local StatusLabel = Instance.new("TextLabel")
@@ -1279,8 +831,8 @@ StatusLabel.Text = "選擇一個玩家"
 StatusLabel.Parent = MainFrame
 
 local PlayerList = Instance.new("ScrollingFrame")
-PlayerList.Size = UDim2.new(1, -12, 1, -354)
-PlayerList.Position = UDim2.new(0, 6, 0, 318)
+PlayerList.Size = UDim2.new(1, -12, 1, -270)
+PlayerList.Position = UDim2.new(0, 6, 0, 234)
 PlayerList.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
 PlayerList.BorderSizePixel = 0
 
