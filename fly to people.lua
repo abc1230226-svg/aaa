@@ -502,7 +502,7 @@ SpeedDownButton.MouseButton1Click:Connect(function()
 end)
 
 SpeedUpButton.MouseButton1Click:Connect(function()
-	flySpeed = flySpeed + 10
+	flySpeed = flySpeed + 20
 	updateSpeedText()
 end)
 
