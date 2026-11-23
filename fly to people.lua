@@ -36,7 +36,7 @@ end
 local targetPlayer = nil
 local currentMarker = nil
 
-local flySpeed = 80
+local flySpeed = 100
 local flyHeight = 5
 local isFlying = false
 
@@ -195,9 +195,10 @@ local function createSpeedButton(text, speed, x)
 end
 
 createSpeedButton("慢 30", 30, 8)
-createSpeedButton("中 80", 80, 86)
-createSpeedButton("快 150", 150, 164)
-createSpeedButton("超快 250", 250, 242)
+createSpeedButton("中 250", 250, 86)
+createSpeedButton("快 500", 500, 164)
+createSpeedButton("超快 1000", 1000, 242)
+
 
 local StatusLabel = Instance.new("TextLabel")
 StatusLabel.Size = UDim2.new(1, -12, 0, 26)
@@ -214,8 +215,15 @@ PlayerList.Size = UDim2.new(1, -12, 1, -150)
 PlayerList.Position = UDim2.new(0, 6, 0, 114)
 PlayerList.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
 PlayerList.BorderSizePixel = 0
+
+-- 啟用上下捲動
+PlayerList.Active = true
+PlayerList.ScrollingEnabled = true
+PlayerList.ScrollingDirection = Enum.ScrollingDirection.Y
 PlayerList.ScrollBarThickness = 6
+PlayerList.AutomaticCanvasSize = Enum.AutomaticSize.Y
 PlayerList.CanvasSize = UDim2.new(0, 0, 0, 0)
+
 PlayerList.Parent = MainFrame
 addCorner(PlayerList, 8)
 
@@ -231,9 +239,6 @@ UIPadding.PaddingRight = UDim.new(0, 6)
 UIPadding.PaddingBottom = UDim.new(0, 6)
 UIPadding.Parent = PlayerList
 
-UIListLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
-	PlayerList.CanvasSize = UDim2.new(0, 0, 0, UIListLayout.AbsoluteContentSize.Y + 12)
-end)
 
 local dragging = false
 local dragStart
@@ -497,12 +502,12 @@ local function flyAbovePlayer(player)
 end
 
 SpeedDownButton.MouseButton1Click:Connect(function()
-	flySpeed = math.max(10, flySpeed - 10)
+	flySpeed = flySpeed - 40
 	updateSpeedText()
 end)
 
 SpeedUpButton.MouseButton1Click:Connect(function()
-	flySpeed = flySpeed + 20
+	flySpeed = flySpeed + 40
 	updateSpeedText()
 end)
 
