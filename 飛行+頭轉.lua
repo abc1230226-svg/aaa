@@ -900,7 +900,87 @@ FireStatus.Parent = FireFrame
 
 local DiagnoseFire = fireButton("診斷", 288, 52)
 DiagnoseFire.Position = UDim2.new(0, 288, 0, 51)
-DiagnoseFire.MouseButton1Click:Connect(reportFireDiagnostics)
+-- 診斷視窗：讓結果直接顯示在 UI，而不必閱讀 F9 主控台。
+local DiagnosticPanel = Instance.new("Frame")
+DiagnosticPanel.Name = "FireDiagnosticPanel"
+DiagnosticPanel.Size = UDim2.new(1, -20, 0, 185)
+DiagnosticPanel.Position = UDim2.new(0, 10, 0.5, -92)
+DiagnosticPanel.BackgroundColor3 = Color3.fromRGB(23, 30, 39)
+DiagnosticPanel.BorderSizePixel = 0
+DiagnosticPanel.Visible = false
+DiagnosticPanel.ZIndex = 30
+DiagnosticPanel.Parent = MainFrame
+addCorner(DiagnosticPanel, 9)
+
+local DiagnosticTitle = Instance.new("TextLabel")
+DiagnosticTitle.Size = UDim2.new(1, -20, 0, 30)
+DiagnosticTitle.Position = UDim2.new(0, 10, 0, 6)
+DiagnosticTitle.BackgroundTransparency = 1
+DiagnosticTitle.TextColor3 = Color3.fromRGB(235, 235, 235)
+DiagnosticTitle.Font = Enum.Font.SourceSansBold
+DiagnosticTitle.TextSize = 17
+DiagnosticTitle.TextXAlignment = Enum.TextXAlignment.Left
+DiagnosticTitle.Text = "射擊間隔診斷結果"
+DiagnosticTitle.ZIndex = 31
+DiagnosticTitle.Parent = DiagnosticPanel
+
+local DiagnosticText = Instance.new("TextLabel")
+DiagnosticText.Size = UDim2.new(1, -20, 0, 105)
+DiagnosticText.Position = UDim2.new(0, 10, 0, 38)
+DiagnosticText.BackgroundTransparency = 1
+DiagnosticText.TextColor3 = Color3.fromRGB(220, 220, 220)
+DiagnosticText.Font = Enum.Font.SourceSans
+DiagnosticText.TextSize = 15
+DiagnosticText.TextWrapped = true
+DiagnosticText.TextXAlignment = Enum.TextXAlignment.Left
+DiagnosticText.TextYAlignment = Enum.TextYAlignment.Top
+DiagnosticText.ZIndex = 31
+DiagnosticText.Parent = DiagnosticPanel
+
+local DiagnosticClose = Instance.new("TextButton")
+DiagnosticClose.Size = UDim2.new(0, 80, 0, 27)
+DiagnosticClose.Position = UDim2.new(1, -90, 1, -34)
+DiagnosticClose.BackgroundColor3 = Color3.fromRGB(65, 84, 106)
+DiagnosticClose.TextColor3 = Color3.fromRGB(255, 255, 255)
+DiagnosticClose.Font = Enum.Font.SourceSansBold
+DiagnosticClose.TextSize = 15
+DiagnosticClose.Text = "關閉"
+DiagnosticClose.ZIndex = 31
+DiagnosticClose.Parent = DiagnosticPanel
+addCorner(DiagnosticClose, 5)
+DiagnosticClose.MouseButton1Click:Connect(function()
+    DiagnosticPanel.Visible = false
+end)
+
+local function displayFireDiagnosis()
+    refreshEquippedFireTool()
+    local description
+    local installed = fireState.indexInstalled or fireState.namecallInstalled
+    if not installed then
+        description = "找不到可使用的 Hook 功能。\n這個版本無法攔截射速設定。"
+    elseif not fireState.tool then
+        description = "沒有偵測到已裝備的 Tool。\n如果槍已經拿在手上，遊戲可能使用自訂槍械系統。"
+    elseif fireState.readHits > 0 then
+        description = "已攔截到部分數值讀取。\n但是否真正提高射速，仍要看遊戲的射擊邏輯。"
+    elseif fireState.candidates == 0 then
+        description = "找不到可辨識的射速欄位。\n射擊間隔可能放在 ModuleScript、區域變數或伺服器。"
+    elseif fireState.observedValueReads == 0 then
+        description = "找到可能的射速欄位，但沒有偵測到 Value 讀取。\n槍械可能透過不同的方式取得設定。"
+    else
+        description = "有讀取數值，但沒有符合名稱的射速欄位被攔截。\n目前 Hook 沒有命中真正的射擊間隔。"
+    end
+    local toolName = fireState.tool and fireState.tool.Name or "未偵測到"
+    local activationText = (fireState.shotSignals > 0) and "有" or "無"
+    DiagnosticText.Text = string.format(
+        "武器：%s｜欄位：%d｜攔截：%d\n%s\nTool 啟動事件：%s（不等於實際開火）",
+        toolName, fireState.candidates, fireState.readHits, description, activationText
+    )
+    DiagnosticPanel.Visible = true
+    -- 更詳細的欄位路徑仍可在 F9 主控台查看。
+    reportFireDiagnostics()
+end
+
+DiagnoseFire.MouseButton1Click:Connect(displayFireDiagnosis)
 
 local function updateFireInterval(newValue)
     local n = tonumber(newValue)
