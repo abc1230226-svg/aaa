@@ -57,7 +57,7 @@ local walkLastRestoreTime = -math.huge
 local walkResetCount = 0
 
 
--- ===== 客戶端 __newindex Hook（僅攔截本機對 WalkSpeed 的寫入） =====
+-- ===== 客戶端 __newindex Hook（啟動後常駐；僅攔截本機 WalkSpeed 寫入） =====
 -- Roblox Studio 標準 LocalScript 不提供 hookmetamethod/newcclosure。
 -- 如果執行環境沒有 Hook API，就會退回原先的 WalkSpeed 設定與監測。
 local hookEnv
@@ -208,7 +208,7 @@ if LocalPlayer.Character then
     task.defer(watchWalkHumanoid, LocalPlayer.Character)
 end
 
--- 重新執行這份檔案時，銷毀舊介面會釋放這一版的監控連線。
+-- 隱藏視窗不會停用 Hook；重複執行時，銷毀舊 GUI 才會清理舊連線。
 ScreenGui.Destroying:Connect(function()
     hookState.enabled = false -- 舊版停用，重新執行時重用同一個 Hook
     if walkWatchConnection then walkWatchConnection:Disconnect() end
@@ -472,25 +472,21 @@ HookDetail.Font = Enum.Font.SourceSans
 HookDetail.TextXAlignment = Enum.TextXAlignment.Left
 HookDetail.Parent = HookFrame
 
+-- Hook 預設常駐；狀態欄僅顯示，不再提供關閉按鈕。
 local function refreshHookButton()
-    if not hookState.installed then
-        HookButton.Text = "Hook 不支援"
-        HookButton.BackgroundColor3 = Color3.fromRGB(85, 65, 65)
-    elseif hookState.enabled then
-        HookButton.Text = "Hook：開"
+    if hookState.installed then
+        hookState.enabled = true
+        HookButton.Text = "Hook：常駐"
         HookButton.BackgroundColor3 = Color3.fromRGB(55, 88, 55)
     else
-        HookButton.Text = "Hook：關"
+        HookButton.Text = "Hook 不支援"
         HookButton.BackgroundColor3 = Color3.fromRGB(85, 65, 65)
     end
+    HookButton.AutoButtonColor = false
+    HookButton.Active = false
 end
 
 refreshHookButton()
-HookButton.MouseButton1Click:Connect(function()
-    if not hookState.installed then return end
-    hookState.enabled = not hookState.enabled
-    refreshHookButton()
-end)
 
 local diagnosticElapsed = 0
 local lastDiagnosticPosition = nil
@@ -499,6 +495,16 @@ local diagnosticConnection = RunService.Heartbeat:Connect(function(dt)
     if diagnosticElapsed < 0.35 then return end
     local elapsed = diagnosticElapsed
     diagnosticElapsed = 0
+
+    -- 當前角色如果被其他機制替換 Humanoid，重新監控；並定期確認速度設定。
+    local currentCharacter = LocalPlayer.Character
+    local currentHumanoid = currentCharacter and currentCharacter:FindFirstChildOfClass("Humanoid")
+    if currentHumanoid and currentHumanoid ~= walkHumanoid then
+        task.defer(watchWalkHumanoid, currentCharacter)
+    elseif currentHumanoid and math.abs(currentHumanoid.WalkSpeed - walkSpeed) >= 0.01 then
+        -- 最多每 0.35 秒檢查並嘗試套用一次，避免高速寫入。
+        currentHumanoid.WalkSpeed = walkSpeed
+    end
 
     local character = LocalPlayer.Character
     local humanoid = character and character:FindFirstChildOfClass("Humanoid")
