@@ -56,6 +56,77 @@ local walkLastWarnTime = -math.huge
 local walkLastRestoreTime = -math.huge
 local walkResetCount = 0
 
+
+-- ===== 客戶端 __newindex Hook（僅攔截本機對 WalkSpeed 的寫入） =====
+-- Roblox Studio 標準 LocalScript 不提供 hookmetamethod/newcclosure。
+-- 如果執行環境沒有 Hook API，就會退回原先的 WalkSpeed 設定與監測。
+local hookEnv
+if type(getgenv) == "function" then
+    local ok, env = pcall(getgenv)
+    if ok and type(env) == "table" then hookEnv = env end
+end
+
+local hookKey = "__fly_to_people_walkspeed_hook_20261124"
+local hookState = hookEnv and hookEnv[hookKey] or nil
+if type(hookState) ~= "table" then
+    hookState = {
+        installed = false,
+        enabled = true,
+        humanoid = nil,
+        speed = walkSpeed,
+        blocked = 0,
+    }
+    if hookEnv then hookEnv[hookKey] = hookState end
+end
+hookState.enabled = true
+hookState.speed = walkSpeed
+
+local function installWalkSpeedHook()
+    if hookState.installed then return true end
+    if type(hookmetamethod) ~= "function" then
+        warn("[WalkSpeed Hook] 執行環境不支援 hookmetamethod；維持一般設定模式")
+        return false
+    end
+
+    local oldNewIndex
+    local function interceptNewIndex(self, property, value)
+        if hookState.enabled and self == hookState.humanoid
+            and property == "WalkSpeed" and type(value) == "number"
+            and value ~= hookState.speed then
+            local isExecutor = false
+            if type(checkcaller) == "function" then
+                local ok, result = pcall(checkcaller)
+                isExecutor = ok and result == true
+            end
+            -- 僅取代其他遊戲客戶端 Lua 腳本的寫入，避免攔截本腳本按鈕。
+            if not isExecutor then
+                hookState.blocked += 1
+                return oldNewIndex(self, property, hookState.speed)
+            end
+        end
+        return oldNewIndex(self, property, value)
+    end
+
+    local replacement = interceptNewIndex
+    if type(newcclosure) == "function" then
+        local ok, result = pcall(newcclosure, interceptNewIndex)
+        if ok then replacement = result end
+    end
+    local ok, result = pcall(function()
+        return hookmetamethod(game, "__newindex", replacement)
+    end)
+    if not ok or type(result) ~= "function" then
+        warn("[WalkSpeed Hook] 無法安裝 Hook：", result)
+        return false
+    end
+    oldNewIndex = result
+    hookState.installed = true
+    print("[WalkSpeed Hook] 已啟用本機 __newindex 攔截")
+    return true
+end
+
+installWalkSpeedHook()
+
 -- 監控實際 WalkSpeed：如果其他腳本改了數值，記錄並嘗試恢復。
 -- 注意：這只能處理 WalkSpeed 屬性被覆寫，不保證突破遊戲伺服器的移動限制。
 local function watchWalkHumanoid(character)
@@ -64,6 +135,7 @@ local function watchWalkHumanoid(character)
         walkWatchConnection = nil
     end
     walkHumanoid = nil
+    hookState.humanoid = nil
     if not character then return end
 
     local humanoid = character:FindFirstChildOfClass("Humanoid")
@@ -74,6 +146,8 @@ local function watchWalkHumanoid(character)
     end
 
     walkHumanoid = humanoid
+    hookState.humanoid = humanoid
+    hookState.speed = walkSpeed
     humanoid.WalkSpeed = walkSpeed
     print("[WalkSpeed] 已套用設定速度：", humanoid.WalkSpeed)
 
@@ -112,6 +186,7 @@ local function applyWalkSpeed(value)
     end
 
     walkSpeed = math.max(0, math.floor(num + 0.5))
+    hookState.speed = walkSpeed
     local character = LocalPlayer.Character
     local humanoid = character and character:FindFirstChildOfClass("Humanoid")
     if humanoid then
@@ -135,6 +210,7 @@ end
 
 -- 重新執行這份檔案時，銷毀舊介面會釋放這一版的監控連線。
 ScreenGui.Destroying:Connect(function()
+    hookState.enabled = false -- 舊版停用，重新執行時重用同一個 Hook
     if walkWatchConnection then walkWatchConnection:Disconnect() end
     if walkCharacterConnection then walkCharacterConnection:Disconnect() end
 end)
@@ -367,6 +443,91 @@ end)
 
 applyWalkSpeed(walkSpeed)
 
+-- ===== Hook 開關／真實移動速度診斷 =====
+local HookFrame = Instance.new("Frame")
+HookFrame.Size = UDim2.new(1, -12, 0, 32)
+HookFrame.Position = UDim2.new(0, 6, 0, 150)
+HookFrame.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+HookFrame.BorderSizePixel = 0
+HookFrame.Parent = MainFrame
+addCorner(HookFrame, 8)
+
+local HookButton = Instance.new("TextButton")
+HookButton.Size = UDim2.new(0, 90, 0, 26)
+HookButton.Position = UDim2.new(0, 6, 0, 3)
+HookButton.BackgroundColor3 = Color3.fromRGB(55, 88, 55)
+HookButton.TextColor3 = Color3.new(1, 1, 1)
+HookButton.TextSize = 13
+HookButton.Font = Enum.Font.SourceSansBold
+HookButton.Parent = HookFrame
+addCorner(HookButton, 6)
+
+local HookDetail = Instance.new("TextLabel")
+HookDetail.Size = UDim2.new(1, -105, 1, 0)
+HookDetail.Position = UDim2.new(0, 103, 0, 0)
+HookDetail.BackgroundTransparency = 1
+HookDetail.TextColor3 = Color3.fromRGB(210, 210, 210)
+HookDetail.TextSize = 12
+HookDetail.Font = Enum.Font.SourceSans
+HookDetail.TextXAlignment = Enum.TextXAlignment.Left
+HookDetail.Parent = HookFrame
+
+local function refreshHookButton()
+    if not hookState.installed then
+        HookButton.Text = "Hook 不支援"
+        HookButton.BackgroundColor3 = Color3.fromRGB(85, 65, 65)
+    elseif hookState.enabled then
+        HookButton.Text = "Hook：開"
+        HookButton.BackgroundColor3 = Color3.fromRGB(55, 88, 55)
+    else
+        HookButton.Text = "Hook：關"
+        HookButton.BackgroundColor3 = Color3.fromRGB(85, 65, 65)
+    end
+end
+
+refreshHookButton()
+HookButton.MouseButton1Click:Connect(function()
+    if not hookState.installed then return end
+    hookState.enabled = not hookState.enabled
+    refreshHookButton()
+end)
+
+local diagnosticElapsed = 0
+local lastDiagnosticPosition = nil
+local diagnosticConnection = RunService.Heartbeat:Connect(function(dt)
+    diagnosticElapsed += dt
+    if diagnosticElapsed < 0.35 then return end
+    local elapsed = diagnosticElapsed
+    diagnosticElapsed = 0
+
+    local character = LocalPlayer.Character
+    local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+    local root = character and character:FindFirstChild("HumanoidRootPart")
+    if not humanoid or not root then
+        lastDiagnosticPosition = nil
+        HookDetail.Text = "等待角色載入…"
+        return
+    end
+
+    local p = root.Position
+    local horizontalSpeed = 0
+    if lastDiagnosticPosition then
+        local diff = p - lastDiagnosticPosition
+        horizontalSpeed = Vector3.new(diff.X, 0, diff.Z).Magnitude / elapsed
+    end
+    lastDiagnosticPosition = p
+    if isFlying or isFollowingHead then
+        HookDetail.Text = string.format("WalkSpeed %.0f | 正在飛行", humanoid.WalkSpeed)
+    else
+        HookDetail.Text = string.format(
+            "屬性 %.0f / 實走 %.1f | 攔截 %d",
+            humanoid.WalkSpeed, horizontalSpeed, hookState.blocked
+        )
+    end
+end)
+ScreenGui.Destroying:Connect(function()
+    diagnosticConnection:Disconnect()
+end)
 
 local StatusLabel = Instance.new("TextLabel")
 StatusLabel.Size = UDim2.new(1, -12, 0, 26)
@@ -379,8 +540,8 @@ StatusLabel.Text = "選擇一個玩家"
 StatusLabel.Parent = MainFrame
 
 local PlayerList = Instance.new("ScrollingFrame")
-PlayerList.Size = UDim2.new(1, -12, 1, -188)
-PlayerList.Position = UDim2.new(0, 6, 0, 152)
+PlayerList.Size = UDim2.new(1, -12, 1, -224)
+PlayerList.Position = UDim2.new(0, 6, 0, 188)
 PlayerList.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
 PlayerList.BorderSizePixel = 0
 
