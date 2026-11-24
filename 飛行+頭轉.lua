@@ -540,10 +540,10 @@ end)
 local healthVisible = true
 local healthEnemyOnly = false -- 預設顯示所有其他玩家，避免無隊伍/同隊時排除
 local healthDisplayDistance = 1500  -- 最遠顯示距離（studs）
-local hpBillboardWidth = 7.0
-local hpBillboardHeight = 6.2
-local hpWorldVerticalOffset = -1.3
-local hpBarRightPosition = 1.00 -- 血條相對 UI 的水平位置，0 到 1
+local hpBillboardWidth = 10.0      -- 增加 UI 寬度，讓血條能放到角色更遠的右側（studs）
+local hpBillboardHeight = 7.0      -- 增加 UI 高度，讓直立血條更高（studs）
+local hpWorldVerticalOffset = -1.3 -- 調整 UI 上下位置（正值向上，負值向下）
+local hpBarRightPosition = 0.78    -- 血條在寬版 UI 內的位置；配合寬度約離角色右邊 2.8 studs
 
 local hpGuiFolderName = "PlayerMarkerFlyLock_HP_Overlays"
 local oldHPFolder = UI_PARENT:FindFirstChild(hpGuiFolderName)
@@ -670,7 +670,7 @@ local function hpAttach(player, character)
     nameLabel.Name = "PlayerName"
     nameLabel.AnchorPoint = Vector2.new(0.5, 0)
     nameLabel.Size = UDim2.new(0.74, 0, 0.15, 0)
-    nameLabel.Position = UDim2.new(0.60, 0, 0.01, 0)
+    nameLabel.Position = UDim2.new(0.50, 0, 0.01, 0)
     nameLabel.BackgroundTransparency = 1
     nameLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
     nameLabel.TextStrokeColor3 = Color3.fromRGB(10, 10, 10)
@@ -687,8 +687,8 @@ local function hpAttach(player, character)
     -- 角色右側直立 HP 血條，填充方向由下往上
     local barBack = Instance.new("Frame")
     barBack.Name = "VerticalHPBackground"
-    barBack.Size = UDim2.new(0.08, 0, 0.85, 0)
-    barBack.Position = UDim2.new(hpBarRightPosition, 0, 0.23, 0)
+    barBack.Size = UDim2.new(0.075, 0, 0.76, 0) -- 加粗並加長
+    barBack.Position = UDim2.new(hpBarRightPosition, 0, 0.20, 0)
     barBack.BackgroundColor3 = Color3.fromRGB(27, 29, 34)
     barBack.BorderSizePixel = 0
     barBack.ClipsDescendants = true
@@ -707,8 +707,8 @@ local function hpAttach(player, character)
     -- 直立血條右側顯示剩餘血量
     local label = Instance.new("TextLabel")
     label.Name = "HPAmount"
-    label.Size = UDim2.new(0.32, 0, 0.3, 0)
-    label.Position = UDim2.new(hpBarRightPosition + 0.06, 0, 0.23, 0)
+    label.Size = UDim2.new(0.13, 0, 0.21, 0) -- 放大 HP 數字顯示高度，且不超出 UI 右邊界
+    label.Position = UDim2.new(hpBarRightPosition + 0.085, 0, 0.16, 0) -- 在血條右側留出間隔
     label.BackgroundTransparency = 1
     label.TextColor3 = Color3.new(1, 1, 1)
     label.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
@@ -719,7 +719,7 @@ local function hpAttach(player, character)
     label.Parent = billboard
     local hpFontConstraint = Instance.new("UITextSizeConstraint")
     hpFontConstraint.MinTextSize = 1
-    hpFontConstraint.MaxTextSize = 16
+    hpFontConstraint.MaxTextSize = 24 -- HP 字體最大值
     hpFontConstraint.Parent = label
 
     local entry = {billboard = billboard, character = character, connections = {}}
